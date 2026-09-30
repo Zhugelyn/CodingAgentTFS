@@ -1,0 +1,33 @@
+# Планирование и журнал решений — не в репозитории
+/memory.md
+/docs/PLAN.md
+/docs/story/
+
+# Секреты и окружение
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Данные прогонов
+/runs/
+/traces/
+/tickets/*/*
+!/tickets/*/.gitkeep
+
+# Инструменты
+.claude/
+.idea/
+.vscode/
+
+# Спайки (черновой код)
+/spikes/
