@@ -1,0 +1,26 @@
+# ArioCodingAgent
+
+Харнесс из трёх агентов (analyst → developer → reviewer) на OpenHands SDK: разбирает тикет из папки и оставляет ветку `ai/<id>` в репозитории RX. Оркестратор (`src/ario/orchestrator.py`) сам LLM не использует.
+
+## Команды
+- `uv sync` — зависимости
+- `uv run pytest` — тесты (на заглушках LLM, без сети)
+- `uv run ruff check src tests` и `uv run ruff format .` — линтер и формат
+- `uv run mypy` — типы (strict)
+- `uv run ario run <id>` — провести тикет из `tickets/inbox/<id>.md`
+
+## Правила
+- Python 3.13, type hints везде, ruff + mypy + pytest. Комментарии и сообщения пользователю — по-русски.
+- Код переносимый (Windows для разработки, Docker/Linux для продакшена): `pathlib`, без жёстких путей; настройки из `.env` (пример: `config/.env.example`).
+- Тесты не ходят в сеть и не вызывают реальную модель.
+- Этап закончен, когда тесты зелёные, пройден `/code-review`, заказчик апрувнул. Итоги этапа — в `memory.md`.
+- Не коммитить: секреты, `.env`, `runs/`, `traces/`, содержимое `tickets/*/`.
+
+## Локальные файлы (не в git)
+`memory.md` (журнал решений), `docs/PLAN.md` (план), `docs/story/` (карта историй). Читать их перед работой: при расхождении прав `memory.md`.
+
+## Формат тикета и вердиктов
+Описан в `docs/story/D01-ticket-and-verdict-format.md`; разбор тикета — `src/ario/ticket.py`.
+
+## Особенности OpenHands SDK
+Подробности в `docs/spike.md`: нужен `truststore` за корпоративным прокси; мета-поле `summary` у действий отключать (иначе Qwen ломает tool calling).

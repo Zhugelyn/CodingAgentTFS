@@ -1,0 +1,55 @@
+# Guardrails: лимиты, injection-сканер, границы путей и команд.
+# Файл обязателен (при его отсутствии харнесс не стартует). Путь: ARIO_GUARDRAILS.
+
+limits:
+  max_steps:            # шагов (итераций) на один запуск агента
+    analyst: 20
+    developer: 60
+    reviewer: 30
+  max_tokens_per_run: 128000   # токенов на один запуск агента
+  ticket_timeout_seconds: 1800 # 30 минут на тикет
+  model_retries: 3             # попыток при 429/5xx
+
+injection:
+  # Проверяются текст тикета на входе, а также файлы и вывод инструментов в процессе.
+  patterns:
+    - id: ignore-instructions-en
+      regex: '(?i)\b(ignore|disregard|forget)\b.{0,30}\b(previous|above|prior|earlier|all)\b.{0,30}\b(instructions?|rules?|prompts?)\b'
+    - id: ignore-instructions-ru
+      regex: '(?i)\b(игнорируй|забудь|отмени)\b.{0,30}\b(предыдущ\w*|прошл\w*|все|выше\w*)\b.{0,30}\b(инструкци\w*|правил\w*|промпт\w*)\b'
+    - id: reveal-prompt-or-secret
+      regex: '(?i)\b(reveal|show|print|output|leak|выведи|покажи|раскрой|отправь)\b.{0,40}\b(system prompt|api[ _-]?key|password|secret|token|системн\w+ промпт|пароль|секрет|ключ\w*|токен\w*)\b'
+    - id: role-override
+      regex: '(?i)\b(you are now (DAN|in developer mode|an? (unrestricted|unfiltered))|pretend to be|from now on you|с этого момента ты|притворись)\b'
+    - id: chat-template-tokens
+      regex: '(<\|im_start\|>|<\|im_end\|>|<\|system\|>|\[INST\]|<<SYS>>)'
+    - id: pipe-to-shell
+      regex: '(?i)\b(curl|wget|iwr|Invoke-WebRequest)\b[^\n]{0,200}\|\s*(sh|bash|iex|Invoke-Expression|powershell)\b'
+    - id: destructive-command
+      regex: '(?i)(\brm\s+-rf\b|\bRemove-Item\b[^\n]{0,40}-Recurse|\bgit\s+push\b|\bgit\s+reset\s+--hard\b|\bformat\s+[a-z]:)'
+
+paths:
+  # Правило с `/` на конце — совпадение по имени любой папки пути, иначе — по имени файла (fnmatch).
+  write_deny: ['*.g.cs', 'bin/', 'obj/', '.git/']
+  read_deny: ['.git/']
+
+commands:
+  # Команда должна целиком совпасть с одним из allow и не совпасть ни с одним deny.
+  # Символы ; & | < > ` $ и переводы строк запрещены всегда.
+  # dotnet build: только белый список ключей, иначе -o:/-p:OutputPath=/-bl:/-flp: пишут вне RX.
+  allow:
+    - '^git (status|diff|log|branch --show-current)( [\w./:=@~^ -]*)?$'
+    - '^dotnet build( [\w./\\-]+\.(csproj|sln|slnx))?( --no-restore)?( (-c|--configuration) (Debug|Release))?( -v(erbosity)? (q|quiet|m|minimal|n|normal))?$'
+  deny:
+    - '--output'
+    - '--ext-diff'
+    - '--upload-pack'
+    - '--exec'
+    - '--no-index'
+    - '(^| )-o( |$)'
+    - '\.\.'
+    - '(^|\s)([A-Za-z]:|[/\\])'   # абсолютные пути (и UNC): только относительные от корня RX
+
+env:
+  # Переменные окружения с такими именами не попадают в окружение агента.
+  secret_name_pattern: '(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)'
