@@ -6,7 +6,9 @@ limits:
     analyst: 20
     developer: 60
     reviewer: 30
-  max_tokens_per_run: 128000   # токенов на один запуск агента
+  # размер контекста одного запроса к модели (prompt), токенов; решение заказчика 2026-10-03.
+  # Расход за прогон в целом ограничивают шаги и время на тикет.
+  max_context_tokens: 128000
   ticket_timeout_seconds: 1800 # 30 минут на тикет
   model_retries: 3             # попыток при 429/5xx
 
@@ -19,6 +21,10 @@ injection:
       regex: '(?i)\b(игнорируй|забудь|отмени)\b.{0,30}\b(предыдущ\w*|прошл\w*|все|выше\w*)\b.{0,30}\b(инструкци\w*|правил\w*|промпт\w*)\b'
     - id: reveal-prompt-or-secret
       regex: '(?i)\b(reveal|show|print|output|leak|выведи|покажи|раскрой|отправь)\b.{0,40}\b(system prompt|api[ _-]?key|password|secret|token|системн\w+ промпт|пароль|секрет|ключ\w*|токен\w*)\b'
+    - id: ignore-above-en
+      regex: '(?i)\b(ignore|disregard|forget|override)\b.{0,40}\b(rules?|instructions?|guidelines|prompts?)\b.{0,20}\b(above|before|prior|previous)\b'
+    - id: ignore-above-ru
+      regex: '(?i)\b(игнорируй|забудь|отмени)\b.{0,40}\b(правил\w*|инструкци\w*|требовани\w*)\b.{0,20}\b(выше|ранее|прежн\w*)\b'
     - id: role-override
       regex: '(?i)\b(you are now (DAN|in developer mode|an? (unrestricted|unfiltered))|pretend to be|from now on you|с этого момента ты|притворись)\b'
     - id: chat-template-tokens
@@ -30,26 +36,50 @@ injection:
 
 paths:
   # Правило с `/` на конце — совпадение по имени любой папки пути, иначе — по имени файла (fnmatch).
-  write_deny: ['*.g.cs', 'bin/', 'obj/', '.git/']
-  read_deny: ['.git/']
-
-commands:
-  # Команда должна целиком совпасть с одним из allow и не совпасть ни с одним deny.
-  # Символы ; & | < > ` $ и переводы строк запрещены всегда.
-  # dotnet build: только белый список ключей, иначе -o:/-p:OutputPath=/-bl:/-flp: пишут вне RX.
-  allow:
-    - '^git (status|diff|log|branch --show-current)( [\w./:=@~^ -]*)?$'
-    - '^dotnet build( [\w./\\-]+\.(csproj|sln|slnx))?( --no-restore)?( (-c|--configuration) (Debug|Release))?( -v(erbosity)? (q|quiet|m|minimal|n|normal))?$'
-  deny:
-    - '--output'
-    - '--ext-diff'
-    - '--upload-pack'
-    - '--exec'
-    - '--no-index'
-    - '(^| )-o( |$)'
-    - '\.\.'
-    - '(^|\s)([A-Za-z]:|[/\\])'   # абсолютные пути (и UNC): только относительные от корня RX
+  # Запись: сгенерированные файлы, артефакты сборки, а также всё, что исполняется при сборке
+  # (проекты, props/targets, скрипты, настройки NuGet, CI): правка этих файлов агентом позволила бы
+  # выполнить произвольный код командой `build`.
+  write_deny:
+    - '*.g.cs'
+    - 'bin/'
+    - 'obj/'
+    - '.git/'
+    - '*.csproj'
+    - '*.props'
+    - '*.targets'
+    - '*.sln'
+    - '*.slnx'
+    - '*.rsp'
+    - 'nuget.config'
+    - 'global.json'
+    - '.config/'
+    - '*.ps1'
+    - '*.bat'
+    - '*.cmd'
+    - '*.sh'
+    - 'do.*'
+    - '.gitattributes'
+    - '.gitmodules'
+    - '.gitignore'
+    - '.github/'
+    - '.azuredevops/'
+  # Чтение: служебные папки git, ключи и файлы с учётными данными (иначе они уйдут в промпт модели).
+  read_deny:
+    - '.git/'
+    - '.env'
+    - '.env.*'
+    - '*.pfx'
+    - '*.pem'
+    - '*.key'
+    - '*.p12'
+    - '*.jks'
+    - 'id_rsa*'
+    - 'id_ed25519*'
+    - '.npmrc'
+    - '.netrc'
 
 env:
   # Переменные окружения с такими именами не попадают в окружение агента.
-  secret_name_pattern: '(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL)'
+  secret_name_pattern: '(?i)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|(^|_)PAT$|COOKIE|PRIVATE|CONNECTIONSTRING|DATABASE_URL|SSH_AUTH)'
+  # Исключение: учётные данные приватной ленты NuGet нужны `dotnet restore` (процесс сборки).
+  keep_name_pattern: '^NuGetPackageSourceCredentials_'

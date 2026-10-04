@@ -9,6 +9,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
+MAX_TICKET_BYTES = 1_000_000
+MAX_HEADER_CHARS = 300  # заголовок комментария длиннее не разбираем (защита от ReDoS)
 _FRONT_MATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 _COMMENT_HEADER = re.compile(r"^(?P<author>.+?)\s*·\s*(?P<date>\S+)\s*$")
 
@@ -67,7 +69,7 @@ def _split_sections(body: str, level: str, known: frozenset[str] | None = None) 
 def _parse_discussion(text: str) -> list[Comment]:
     comments: list[Comment] = []
     for header, content in _split_sections(text, "###").items():
-        match = _COMMENT_HEADER.match(header)
+        match = _COMMENT_HEADER.match(header) if len(header) <= MAX_HEADER_CHARS else None
         if match is None:
             raise TicketError(f"Заголовок комментария без автора и даты: {header!r}")
         comments.append(Comment(author=match["author"].strip(), date=match["date"], text=content))
@@ -106,6 +108,8 @@ def parse_ticket(text: str) -> Ticket:
 
 def load_ticket(path: Path) -> Ticket:
     try:
+        if path.stat().st_size > MAX_TICKET_BYTES:
+            raise TicketError(f"Файл тикета больше {MAX_TICKET_BYTES} байт")
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         raise TicketError(f"Не удалось прочитать файл тикета: {e}") from e

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -117,13 +118,22 @@ def test_cli_run(
     inbox_ticket: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
-    from ario.cli import main
+    """CLI с заглушкой этапа: настоящий .env, модель и RX не задействованы."""
+    import ario.cli as cli
+    from ario.orchestrator import Stage
 
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
     monkeypatch.setenv("ARIO_DATA_DIR", str(settings.data_dir))
-    assert main(["run", inbox_ticket]) == 0
+    monkeypatch.setenv("ARIO_GUARDRAILS", str(settings.guardrails_path))
+    monkeypatch.delenv("RX_PATH", raising=False)
+    monkeypatch.setattr(cli, "build_pipeline", lambda backend: [Stage("stub", lambda ctx: None)])
+
+    assert cli.main(["--env-file", str(empty_env), "run", inbox_ticket]) == 0
     assert "done" in capsys.readouterr().out
-    assert main(["run", "999"]) == 2
+    assert cli.main(["--env-file", str(empty_env), "run", "999"]) == 2
     assert Path(settings.tickets_dir / "done" / "43031.md").exists()
 
 
@@ -162,3 +172,27 @@ def test_resubmitted_ticket_gets_fresh_state(settings: Settings, inbox_ticket: s
     state = StateStore(settings.runs_dir).load(inbox_ticket)
     assert state is not None
     assert state.reason is None
+
+
+def test_parse_command_for_env_file() -> None:
+    from ario.config import parse_command
+
+    assert parse_command(None) == ()
+    assert parse_command("  ") == ()
+    assert parse_command("do.bat dirx build") == ("do.bat", "dirx", "build")
+    if os.name == "nt":  # на Windows обратные слэши сохраняются, кавычки снимаются
+        parts = parse_command(r'"D:\Program Files\DL\do.bat" dirx build')
+        assert parts == (r"D:\Program Files\DL\do.bat", "dirx", "build")
+
+
+def test_failing_stage_condition_does_not_leave_ticket_in_progress(
+    settings: Settings, inbox_ticket: str
+) -> None:
+    def broken_condition(ctx: StageContext) -> bool:
+        raise ValueError("повреждённый артефакт")
+
+    stage = Stage("rework", lambda ctx: None, when=broken_condition)
+    assert Orchestrator(settings, [stage]).run(inbox_ticket) == "needs-human"
+    comments = (settings.tickets_dir / "needs-human" / "43031.comments.md").read_text("utf-8")
+    assert "Не удалось определить, нужен ли этап rework" in comments
+    assert not (settings.tickets_dir / "in-progress" / "43031.md").exists()

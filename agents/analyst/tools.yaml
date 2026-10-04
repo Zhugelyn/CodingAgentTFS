@@ -1,0 +1,5 @@
+# Инструменты analyst: только чтение (решение D02). `finish` и `invoke_skill` добавляются автоматически.
+tools:
+  - find_files
+  - search_text
+  - read_file

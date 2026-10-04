@@ -4,16 +4,27 @@ version = "0.1.0"
 description = "ArioCodingAgent: харнесс из трёх агентов (analyst, developer, reviewer) на OpenHands SDK"
 requires-python = ">=3.13"
 dependencies = [
+    "openhands-sdk>=1.51.0",
+    "psutil>=7.2.2",
     "pydantic>=2.7",
     "python-dotenv>=1.0",
     "pyyaml>=6.0",
+    "regex>=2026.9.29",
+    "truststore>=0.10.4",
 ]
 
 [project.scripts]
 ario = "ario.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.10", "types-pyyaml"]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "types-pyyaml",
+    "types-psutil>=7.2.2.20260906",
+    "types-regex>=2026.9.10.20260911",
+]
 
 [build-system]
 requires = ["hatchling"]

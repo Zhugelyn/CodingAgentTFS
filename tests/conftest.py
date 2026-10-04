@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ario.config import Settings
+from tests.llm_stub import script  # noqa: F401  (фикстура доступна всем тестам)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

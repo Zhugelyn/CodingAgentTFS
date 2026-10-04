@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -20,8 +21,25 @@ class InvalidTicketIdError(ValueError):
     """Идентификатор тикета содержит недопустимые символы (защита от выхода из каталога)."""
 
 
+_RESERVED_NAMES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }
+)
+MAX_TICKET_ID_LENGTH = 64
+
+
 def validate_ticket_id(ticket_id: str) -> str:
-    if not _TICKET_ID.fullmatch(ticket_id):
+    if (
+        not _TICKET_ID.fullmatch(ticket_id)
+        or len(ticket_id) > MAX_TICKET_ID_LENGTH
+        or ticket_id.casefold() in _RESERVED_NAMES  # имена устройств Windows
+    ):
         raise InvalidTicketIdError(f"Недопустимый id тикета: {ticket_id!r}")
     return ticket_id
 
@@ -31,8 +49,9 @@ class TicketNotFoundError(FileNotFoundError):
 
 
 class TicketStore:
-    def __init__(self, tickets_dir: Path) -> None:
+    def __init__(self, tickets_dir: Path, mask: Callable[[str], str] | None = None) -> None:
         self._dir = tickets_dir
+        self._mask = mask or (lambda text: text)
 
     def ensure_dirs(self) -> None:
         for folder in FOLDERS:
@@ -67,4 +86,6 @@ class TicketStore:
     ) -> None:
         """Дописывает запись в `<id>.comments.md` (формат — решение D01)."""
         with self.comments_path(ticket_id, folder).open("a", encoding="utf-8") as f:
-            f.write(f"## [{agent}] {utc_now()} · verdict: {verdict}\n{text.strip()}\n\n")
+            f.write(
+                f"## [{agent}] {utc_now()} · verdict: {verdict}\n{self._mask(text).strip()}\n\n"
+            )

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from ario.trace import utc_now
 
 RunStatus = Literal["running", "done", "needs_human"]
-StageStatus = Literal["pending", "running", "done", "failed"]
+StageStatus = Literal["pending", "running", "done", "failed", "skipped"]
 
 
 class StageState(BaseModel):
@@ -25,7 +25,8 @@ class RunState(BaseModel):
     ticket_id: str
     trace_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     status: RunStatus = "running"
-    started_at: str = Field(default_factory=utc_now)
+    started_at: str = Field(default_factory=utc_now)  # справочно; лимит времени считается иначе
+    active_seconds: float = 0.0  # накопленное время работы над тикетом без простоев между запусками
     reason: str | None = None
     stages: dict[str, StageState] = Field(default_factory=dict)
 

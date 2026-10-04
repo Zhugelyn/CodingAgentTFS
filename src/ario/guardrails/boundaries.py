@@ -1,4 +1,4 @@
-"""Границы инструментов: пути, команды, окружение."""
+"""Границы инструментов: пути и окружение дочерних процессов."""
 
 from __future__ import annotations
 
@@ -9,11 +9,42 @@ from pathlib import Path
 from typing import Literal
 
 from ario.errors import GuardViolation
-from ario.guardrails.config import CommandsConfig, EnvConfig, PathsConfig
+from ario.guardrails.config import EnvConfig, PathsConfig
 
 Mode = Literal["read", "write"]
 
-_SHELL_META = re.compile(r"[;&|<>`$\r\n]")
+_BAD_PATH_CHARS = re.compile(r'[<>"|?*\x00-\x1f]')
+_DRIVE = re.compile(r"^[A-Za-z]:")
+_WINDOWS_DEVICES = frozenset(
+    {
+        "con",
+        "prn",
+        "aux",
+        "nul",
+        *(f"com{i}" for i in range(1, 10)),
+        *(f"lpt{i}" for i in range(1, 10)),
+    }
+)
+
+
+def _reject_suspicious(raw: str) -> None:
+    """Отсекает опасные формы пути ДО `resolve()`: на Windows `resolve()` UNC-пути идёт по сети
+    (утечка NTLM-хэша), а `:` и хвостовые точки/пробелы дают альтернативные потоки и обход имён."""
+    if _BAD_PATH_CHARS.search(raw):
+        raise GuardViolation("Недопустимые символы в пути")
+    normalized = raw.replace("\\", "/")
+    if normalized.startswith("//"):
+        raise GuardViolation("Сетевые и служебные пути (UNC, \\\\?\\) запрещены")
+    rest = normalized[2:] if _DRIVE.match(normalized) else normalized
+    if ":" in rest:
+        raise GuardViolation("Двоеточие в пути запрещено (альтернативные потоки NTFS)")
+    for part in rest.split("/"):
+        if part in ("", ".", ".."):
+            continue
+        if part.endswith((".", " ")):
+            raise GuardViolation("Имя с точкой или пробелом на конце запрещено")
+        if part.split(".")[0].casefold() in _WINDOWS_DEVICES:
+            raise GuardViolation("Зарезервированные имена устройств Windows запрещены")
 
 
 def _denied(rel: Path, rules: list[str]) -> str | None:
@@ -36,10 +67,14 @@ class PathGuard:
         self._config = config
 
     def check(self, path: str | Path, mode: Mode) -> Path:
+        _reject_suspicious(str(path))
         candidate = Path(path)
         if not candidate.is_absolute():
             candidate = self._root / candidate
-        resolved = candidate.resolve()  # схлопывает `..` и символические ссылки
+        try:
+            resolved = candidate.resolve()  # схлопывает `..` и символические ссылки
+        except (OSError, ValueError, RuntimeError) as e:
+            raise GuardViolation(f"Некорректный путь: {path} ({type(e).__name__})") from None
         try:
             rel = resolved.relative_to(self._root)
         except ValueError:
@@ -51,29 +86,21 @@ class PathGuard:
             raise GuardViolation(f"{verb} {rel.as_posix()} запрещено правилом {rule!r}")
         return resolved
 
-
-class CommandPolicy:
-    """Белый список команд терминала."""
-
-    def __init__(self, config: CommandsConfig) -> None:
-        self._allow = [re.compile(p) for p in config.allow]
-        self._deny = [re.compile(p) for p in config.deny]
-
-    def check(self, command: str) -> str:
-        cmd = command.strip()
-        if not cmd:
-            raise GuardViolation("Пустая команда")
-        if _SHELL_META.search(cmd):
-            raise GuardViolation("Команда содержит запрещённые символы (; & | < > ` $ или перенос)")
-        for rx in self._deny:
-            if rx.search(cmd):
-                raise GuardViolation(f"Команда запрещена правилом {rx.pattern!r}: {cmd}")
-        if not any(rx.fullmatch(cmd) for rx in self._allow):
-            raise GuardViolation(f"Команда не входит в белый список: {cmd}")
-        return cmd
+    def readable(self, resolved: Path) -> bool:
+        """Можно ли читать найденный обходом файл (`read_deny`: ключи, `.env` и т.п.)."""
+        try:
+            rel = resolved.relative_to(self._root)
+        except ValueError:
+            return False
+        return _denied(rel, self._config.read_deny) is None
 
 
 def clean_env(environ: Mapping[str, str], config: EnvConfig) -> dict[str, str]:
     """Копия окружения без переменных, похожих на секреты."""
     secret = re.compile(config.secret_name_pattern)
-    return {k: v for k, v in environ.items() if not secret.search(k)}
+    keep = re.compile(config.keep_name_pattern) if config.keep_name_pattern else None
+    return {
+        k: v
+        for k, v in environ.items()
+        if not secret.search(k) or (keep is not None and keep.search(k))
+    }

@@ -29,14 +29,16 @@ class Deadline:
 
 
 class TokenBudget:
-    """Лимит токенов на один запуск агента; `used` — накопленные prompt+completion."""
+    """Лимит размера контекста одного запроса к модели (prompt), в токенах."""
 
     def __init__(self, limit: int) -> None:
         self._limit = limit
 
-    def check(self, used: int) -> None:
-        if used > self._limit:
-            raise LimitExceeded(f"Превышен лимит токенов на запуск агента: {used} > {self._limit}")
+    def check(self, request_tokens: int) -> None:
+        if request_tokens > self._limit:
+            raise LimitExceeded(
+                f"Превышен лимит контекста: {request_tokens} токенов в запросе > {self._limit}"
+            )
 
 
 def is_retryable(exc: BaseException) -> bool:

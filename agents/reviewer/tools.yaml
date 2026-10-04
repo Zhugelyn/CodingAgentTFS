@@ -1,0 +1,8 @@
+# Инструменты reviewer (решение D02): только чтение и git, без правок и сборки.
+# `finish` и `invoke_skill` добавляются автоматически.
+tools:
+  - find_files
+  - search_text
+  - read_file
+  - git_status
+  - git_diff

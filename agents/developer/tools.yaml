@@ -1,0 +1,11 @@
+# Инструменты developer (решение D02, уточнено в S05). Терминала нет.
+# Ветку `ai/<id>` создаёт харнесс перед запуском агента, поэтому инструмента create_branch нет.
+# `finish` и `invoke_skill` добавляются автоматически.
+tools:
+  - find_files
+  - search_text
+  - read_file
+  - edit_file
+  - git_status
+  - git_diff
+  - build

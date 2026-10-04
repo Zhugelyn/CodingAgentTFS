@@ -6,7 +6,6 @@ import pytest
 
 from ario.errors import GuardViolation, InjectionDetected, LimitExceeded
 from ario.guardrails import (
-    CommandPolicy,
     Deadline,
     Guardrails,
     InjectionScanner,
@@ -27,7 +26,7 @@ CONFIG = load_config(GUARDRAILS_FILE)
 def test_config_values_match_plan() -> None:
     lim = CONFIG.limits
     assert lim.max_steps == {"analyst": 20, "developer": 60, "reviewer": 30}
-    assert lim.max_tokens_per_run == 128_000
+    assert lim.max_context_tokens == 128_000
     assert lim.ticket_timeout_seconds == 1800
     assert lim.model_retries == 3
 
@@ -124,50 +123,6 @@ def test_symlink_escape_denied(guard: PathGuard, tmp_path: Path) -> None:
         pytest.skip("символические ссылки недоступны")
     with pytest.raises(GuardViolation, match="вне репозитория"):
         guard.check("src/link/file.cs", "read")
-
-
-# --- команды ---
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git status",
-        "git diff master",
-        "git diff master --stat",
-        "git log -n 5",
-        "git branch --show-current",
-        "dotnet build src/Components/Ario/Ario.csproj",
-        "dotnet build src\\Components\\Ario\\Ario.csproj -c Release",
-    ],
-)
-def test_allowed_commands(cmd: str) -> None:
-    assert CommandPolicy(CONFIG.commands).check(cmd) == cmd
-
-
-@pytest.mark.parametrize(
-    "cmd",
-    [
-        "git push origin master",
-        "git reset --hard",
-        "git checkout master",
-        "git commit -m x",
-        "git status; rm -rf /",
-        "git status && dotnet build",
-        "git diff | sh",
-        "git diff > out.txt",
-        "git diff --output=x.txt",
-        "git diff ../other",
-        "dotnet build -o C:\\tmp",
-        "dotnet build $(whoami)",
-        "dotnet run",
-        "rm -rf /",
-        "Get-Content C:\\secrets.txt",
-        "",
-        "git status\nrm x",
-    ],
-)
-def test_denied_commands(cmd: str) -> None:
-    with pytest.raises(GuardViolation):
-        CommandPolicy(CONFIG.commands).check(cmd)
 
 
 def test_clean_env_removes_secrets() -> None:
