@@ -1,0 +1,90 @@
+{
+  "totalCount": 3,
+  "count": 3,
+  "comments": [
+    {
+      "mentions": [],
+      "workItemId": 90202,
+      "id": 58480,
+      "version": 1,
+      "text": "<div>Решили оставить как есть, т.к. поведение описано в документации.</div>",
+      "createdBy": {
+        "displayName": "Иванов Иван (Ivanov_II)",
+        "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000001",
+        "id": "00000000000000000000000000000001",
+        "uniqueName": "DOMAIN\\Ivanov_II",
+        "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=1",
+        "descriptor": "win.fake-1"
+      },
+      "createdDate": "2026-09-24T14:11:19.373Z",
+      "modifiedBy": {
+        "displayName": "Иванов Иван (Ivanov_II)",
+        "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000001",
+        "id": "00000000000000000000000000000001",
+        "uniqueName": "DOMAIN\\Ivanov_II",
+        "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=1",
+        "descriptor": "win.fake-1"
+      },
+      "modifiedDate": "2026-09-24T14:11:19.373Z",
+      "format": "html",
+      "renderedText": "<div>Решили оставить как есть, т.к. поведение описано в документации.</div>",
+      "_links": {}
+    },
+    {
+      "mentions": [],
+      "workItemId": 90202,
+      "id": 58440,
+      "version": 1,
+      "text": "<div>Исправлено: <a href=\"https://tfs.example.test/Repo/_git/Module/pullrequest/101\">PR 101</a></div>",
+      "createdBy": {
+        "displayName": "Петрова Мария (Petrova_MA)",
+        "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000002",
+        "id": "00000000000000000000000000000002",
+        "uniqueName": "DOMAIN\\Petrova_MA",
+        "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=2",
+        "descriptor": "win.fake-2"
+      },
+      "createdDate": "2026-09-23T12:39:43.007Z",
+      "modifiedBy": {
+        "displayName": "Петрова Мария (Petrova_MA)",
+        "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000002",
+        "id": "00000000000000000000000000000002",
+        "uniqueName": "DOMAIN\\Petrova_MA",
+        "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=2",
+        "descriptor": "win.fake-2"
+      },
+      "modifiedDate": "2026-09-23T12:39:43.007Z",
+      "format": "html",
+      "renderedText": "<div>Исправлено: <a href=\"https://tfs.example.test/Repo/_git/Module/pullrequest/101\">PR 101</a></div>",
+      "_links": {}
+    },
+    {
+      "mentions": [],
+      "workItemId": 90202,
+      "id": 58248,
+      "version": 1,
+      "text": "<div>Проблема воспроизводится на версиях 26.3 и 27.1</div>",
+      "createdBy": {
+        "displayName": "Иванов Иван (Ivanov_II)",
+        "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000004",
+        "id": "00000000000000000000000000000004",
+        "uniqueName": "DOMAIN\\Ivanov_II",
+        "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=4",
+        "descriptor": "win.fake-4"
+      },
+      "createdDate": "2026-09-16T07:19:51.58Z",
+      "modifiedBy": {
+        "displayName": "Иванов Иван (Ivanov_II)",
+        "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000004",
+        "id": "00000000000000000000000000000004",
+        "uniqueName": "DOMAIN\\Ivanov_II",
+        "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=4",
+        "descriptor": "win.fake-4"
+      },
+      "modifiedDate": "2026-09-16T07:19:51.58Z",
+      "format": "html",
+      "renderedText": "<div>Проблема воспроизводится на версиях 26.3 и 27.1</div>",
+      "_links": {}
+    }
+  ]
+}

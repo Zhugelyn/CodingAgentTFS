@@ -1,0 +1,22 @@
+# Фрагмент для librechat.yaml. Имена ключей и допустимые значения сверить с документацией вашей версии:
+# https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/agents
+
+endpoints:
+  agents:
+    # глобальный потолок шагов; лимит каждого агента задаётся в конструкторе («Максимальное количество шагов агента»)
+    recursionLimit: 100
+    capabilities:
+      - mcp
+      - agent_chain   # передачи (handoffs) настраиваются в разделе «Передача полномочий»; нужен ли отдельный ключ, проверить
+      - subagents     # не используем, можно не включать
+      # execute_code, file_search, artifacts не нужны: у агентов нет терминала и произвольных файлов
+
+mcpServers:
+  rx-tools:
+    type: streamable-http          # или stdio, если сервер запускается на этой же машине
+    url: http://rx-host:8765/mcp   # адрес MCP-сервера «RX tools» (см. mcp-rx-tools.md)
+  tfs:
+    # ваш готовый MCP к TFS: оставить как есть; агенту ario-orchestrator выдать только чтение work item и комментариев
+    # (замените блок параметрами вашего MCP)
+    type: streamable-http
+    url: http://tfs-mcp-host/mcp

@@ -248,3 +248,57 @@ def test_llm_retries_are_traced(
     (retry,) = events_of(tmp_path, "llm_retry")
     assert retry["data"]["attempt"] == 1
     assert "RateLimitError" in retry["data"]["error"]
+
+
+def test_role_model_overrides_default(
+    rx: Path, tmp_path: Path, script: Callable[..., list[dict[str, Any]]]
+) -> None:
+    calls = script(finish(GOOD))
+    OpenHandsBackend(
+        "openai/default-model", "sk-test", role_models={"analyst": "openai/strong-model"}
+    ).run(make_request(rx, tmp_path))
+    assert calls[0]["model"].endswith("strong-model")
+
+
+def test_step_limit_gives_one_wrap_up_request(
+    rx: Path, tmp_path: Path, script: Callable[..., list[dict[str, Any]]]
+) -> None:
+    """Шаги кончились без ответа: агент получает короткий финальный запрос и может ответить."""
+    calls = script(
+        response("read_file", {"path": "src/A.cs"}),
+        response("read_file", {"path": "src/A.cs"}),
+        finish("неполный, но вердикт"),
+    )
+    result = backend().run(make_request(rx, tmp_path, max_steps=2))
+    assert result.final_message == "неполный, но вердикт"
+    assert any("Лимит шагов исчерпан" in str(call.get("messages")) for call in calls)
+    events = (tmp_path / "traces" / "1" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"limit_wrap_up"' in events
+
+
+def test_wrap_up_does_not_extend_the_limit_endlessly(
+    rx: Path, tmp_path: Path, script: Callable[..., list[dict[str, Any]]]
+) -> None:
+    from ario.agents.backend import WRAP_UP_STEPS
+
+    script(*[response("read_file", {"path": "src/A.cs"}) for _ in range(2 + WRAP_UP_STEPS)])
+    with pytest.raises(LimitExceeded, match="лимит шагов"):
+        backend().run(make_request(rx, tmp_path, max_steps=2))
+
+
+def test_budget_nudges_are_appended_without_touching_history(
+    rx: Path, tmp_path: Path, script: Callable[..., list[dict[str, Any]]]
+) -> None:
+    calls = script(
+        *[response("read_file", {"path": f"src/F{i}.cs"}) for i in range(8)], finish("ок")
+    )
+    result = backend().run(make_request(rx, tmp_path, max_steps=10))
+    assert result.final_message == "ок"
+    texts = ["\n".join(str(m) for m in c["messages"]) for c in calls]
+    first = next(i for i, t in enumerate(texts) if "Бюджет шагов" in t)
+    assert first > 0  # не в самом начале
+    assert "использовано 5 из 10" in texts[first] or "использовано 6 из 10" in texts[first]
+    # поздний запрос содержит и второе напоминание, а ранние сообщения не изменены
+    assert any("использовано 8 из 10" in t for t in texts)
+    events = (tmp_path / "traces" / "1" / "events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"budget_nudge"') == 2

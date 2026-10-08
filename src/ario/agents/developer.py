@@ -1,4 +1,4 @@
-"""Этап developer: ветка `ai/<id>`, правки по плану analyst, сборка. Коммитов нет."""
+"""Этап developer: ветка тикета (BRANCH_TEMPLATE), правки по плану analyst, сборка. Без коммитов."""
 
 from __future__ import annotations
 
@@ -17,8 +17,9 @@ from ario.fsutil import atomic_write_text
 from ario.guardrails import PathGuard
 from ario.guardrails.config import EnvConfig
 from ario.orchestrator import Stage, StageContext
+from ario.ticket import Ticket
 from ario.tools.build import BuildTool as ProjectBuilder
-from ario.tools.git import GitRepo, Runner, branch_name
+from ario.tools.git import GitRepo, Runner
 from ario.tools.proc import ToolError, run_process
 from ario.trace import TraceWriter
 
@@ -63,9 +64,9 @@ class DevelopmentReport:
 
 
 def _prepare_branch(
-    git: GitRepo, ticket_id: str, attempt: int, trace: TraceWriter, stage: str
+    git: GitRepo, ticket: Ticket, attempt: int, trace: TraceWriter, stage: str
 ) -> str:
-    name = branch_name(ticket_id)
+    name = git.branch_for(ticket.id, ticket.type)
     try:
         current = git.current_branch()
         if current == name:  # возобновление после падения или доработка: продолжаем в своей ветке
@@ -76,7 +77,7 @@ def _prepare_branch(
                 f"Для доработки ожидалась ветка {name}, сейчас {current or 'detached HEAD'}"
             )
         git.ensure_clean()  # между analyst и developer дерево могли испортить
-        created = git.create_ticket_branch(ticket_id)
+        created = git.create_ticket_branch(ticket.id, ticket.type)
     except ToolError as e:
         raise StageFailed(f"Git: {e}") from e
     trace.event("branch_created", stage=stage, agent=ROLE, branch=created)
@@ -133,8 +134,8 @@ def make_developer_stage(
 
         env = ctx.guardrails.config.env
         guard = ctx.guardrails.path_guard(rx)
-        git = GitRepo(rx, env, settings.base_branch, runner=runner)
-        branch = _prepare_branch(git, ctx.ticket.id, attempt, ctx.trace, name)
+        git = GitRepo(rx, env, settings.base_branch, settings.branch_template, runner=runner)
+        branch = _prepare_branch(git, ctx.ticket, attempt, ctx.trace, name)
         toolset = DeveloperToolset(
             rx, guard, git, _make_builder(settings, rx, guard, env, runner), ctx.trace, name
         )

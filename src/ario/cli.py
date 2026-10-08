@@ -1,14 +1,15 @@
-"""Командная строка: `ario run <id>`."""
+"""Командная строка: `ario run <id>`, `ario fetch`, `ario resume`, `ario trace`, `ario eval`."""
 
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from ario.agents.backend import OpenHandsBackend
-from ario.config import Settings
+from ario.config import ConfigError, Settings
 from ario.fsutil import RunInProgressError
 from ario.guardrails import Guardrails
 from ario.orchestrator import (
@@ -29,6 +30,18 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("ticket_id")
     resume = sub.add_parser("resume", help="возобновить тикет из needs-human с упавшего этапа")
     resume.add_argument("ticket_id")
+    ev = sub.add_parser("eval", help="прогнать набор тикетов с ожидаемыми исходами и метриками")
+    ev.add_argument(
+        "--dir", type=Path, default=Path("evals"), help="папка с cases/ и expected.yaml"
+    )
+    ev.add_argument("--only", nargs="*", default=None, help="id кейсов (по умолчанию все)")
+    fetch = sub.add_parser("fetch", help="забрать тикеты из TFS в tickets/inbox/ (только чтение)")
+    fetch.add_argument(
+        "--id", type=int, nargs="+", default=None, help="id work items (по умолчанию запрос WIQL)"
+    )
+    fetch.add_argument(
+        "--dry-run", action="store_true", help="показать, что будет взято, ничего не записывая"
+    )
     trace = sub.add_parser("trace", help="разбор трассы тикета")
     trace.add_argument("ticket_id")
     trace.add_argument("--steps", action="store_true", help="пошаговая лента вызовов агентов")
@@ -60,17 +73,117 @@ def _trace(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_FETCH_MARKS = {
+    "fetched": "взят",
+    "would-fetch": "будет взят",
+    "skipped": "пропущен",
+    "failed": "ОШИБКА",
+}
+
+
+def _fetch(settings: Settings, args: argparse.Namespace) -> int:
+    from ario.store import TicketStore
+    from ario.tfs.client import TfsClient, TfsError
+    from ario.tfs.fetch import CANDIDATES_LIMIT, FetchItem, fetch_tickets, query_ids
+    from ario.trace import Masker
+
+    missing = [
+        name
+        for name, value in (
+            ("TFS_URL", settings.tfs_url),
+            ("TFS_PROJECT", settings.tfs_project),
+            ("TFS_PAT", settings.tfs_pat),
+        )
+        if not value
+    ]
+    if missing or not (settings.tfs_url and settings.tfs_project and settings.tfs_pat):
+        print(f"Ошибка настройки: не заданы {', '.join(missing)}", file=sys.stderr)
+        return 2
+    masker = Masker([settings.tfs_pat])
+
+    def show(item: FetchItem) -> None:
+        # заголовок тикета недоверенный: управляющие символы терминала не выводим
+        detail = _CONTROL_CHARS.sub("?", item.detail)
+        print(f"[{_FETCH_MARKS[item.status]}] {item.ticket_id}: {detail}", flush=True)
+
+    import truststore
+
+    truststore.inject_into_ssl()  # корпоративный прокси с собственным сертификатом
+    store = TicketStore(settings.tickets_dir)
+    try:
+        with TfsClient(settings.tfs_url, settings.tfs_project, settings.tfs_pat) as client:
+            explicit: list[int] | None = args.id
+            ids = explicit if explicit else query_ids(client, settings.tfs_wiql)
+            if not ids:
+                print("Подходящих тикетов в TFS нет")
+                return 0
+            report = fetch_tickets(
+                client,
+                ids,
+                store,
+                limit=None if explicit else settings.tfs_max_items,
+                dry_run=args.dry_run,
+                mask=masker.mask_text,
+                on_item=show,
+            )
+    except (TfsError, ValueError) as e:
+        print(f"Ошибка: {masker.mask_text(str(e))}", file=sys.stderr)
+        return 2
+    new = len(report.of("would-fetch" if args.dry_run else "fetched"))
+    if not explicit and len(ids) >= CANDIDATES_LIMIT and new < settings.tfs_max_items:
+        print(
+            f"Предупреждение: запрос вернул максимум ({CANDIDATES_LIMIT}) тикетов, более старые "
+            "не просмотрены; сузьте отбор через TFS_WIQL",
+            file=sys.stderr,
+        )
+    print(
+        f"\nИтого: {'будет взято' if args.dry_run else 'взято'} {new}, "
+        f"пропущено {len(report.of('skipped'))}, ошибок {len(report.of('failed'))}"
+    )
+    return 1 if report.failed else 0
+
+
+def _eval(settings: Settings, args: argparse.Namespace) -> int:
+    from ario.evals import CaseResult, run_evals
+
+    def show(result: CaseResult) -> None:
+        mark = "PASS" if result.passed else "FAIL"
+        print(f"[{mark}] {result.case_id}: {result.outcome}", flush=True)
+
+    def factory(s: Settings) -> OpenHandsBackend:
+        return OpenHandsBackend(s.llm_model, s.openrouter_api_key, role_models=s.role_models)
+
+    try:
+        run_dir, results = run_evals(settings, args.dir, factory, args.only, on_result=show)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Ошибка: {e}", file=sys.stderr)
+        return 2
+    print(f"\nОтчёт: {run_dir / 'report.md'}")
+    return 0 if all(r.passed for r in results) else 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     # консоль Windows может быть в cp1251: незнакомый символ не должен ронять вывод
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
     args = _build_parser().parse_args(argv)
-    settings = Settings.load(args.env_file)
+    try:
+        settings = Settings.load(args.env_file)
+    except ConfigError as e:
+        print(f"Ошибка настройки: {e}", file=sys.stderr)
+        return 2
     if args.command == "trace":
         return _trace(settings, args)
+    if args.command == "eval":
+        return _eval(settings, args)
+    if args.command == "fetch":
+        return _fetch(settings, args)
     try:
-        backend = OpenHandsBackend(settings.llm_model, settings.openrouter_api_key)
+        backend = OpenHandsBackend(
+            settings.llm_model, settings.openrouter_api_key, role_models=settings.role_models
+        )
         stages = build_pipeline(backend)
         guardrails = Guardrails.load(settings.guardrails_path)
         orchestrator = Orchestrator(settings, stages, guardrails)

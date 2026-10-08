@@ -8,7 +8,8 @@ from pathlib import Path
 
 import yaml
 
-_SKILL_LINK = re.compile(r"skills/([A-Za-z0-9_.-]+)/SKILL\.md")
+# `skills/<имя>/SKILL.md` или с одной папкой-группой: `skills/<группа>/<имя>/SKILL.md`
+_SKILL_LINK = re.compile(r"skills/((?:[A-Za-z0-9_.-]+/)?[A-Za-z0-9_.-]+)/SKILL\.md")
 _INLINE_COMMAND = re.compile(r"!`")  # встроенное выполнение команд в навыках SDK
 
 
@@ -41,7 +42,7 @@ def load_agent_spec(project_dir: Path, role: str) -> AgentSpec:
 
     skill_paths: list[Path] = []
     for name in dict.fromkeys(_SKILL_LINK.findall(role_text)):  # без дублей, порядок сохраняется
-        if set(name) <= {"."}:  # `skills/../SKILL.md` выводит за папку навыков
+        if any(set(part) <= {"."} for part in name.split("/")):  # `skills/../` выводит за папку
             raise SpecError(f"Недопустимое имя навыка: {name!r}")
         path = project_dir / "skills" / name / "SKILL.md"
         if not path.is_file():

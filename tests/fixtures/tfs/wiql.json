@@ -1,0 +1,32 @@
+{
+  "queryType": "flat",
+  "queryResultType": "workItem",
+  "asOf": "2026-10-06T07:00:00Z",
+  "columns": [
+    {
+      "referenceName": "System.Id",
+      "name": "ID",
+      "url": "https://tfs.example.test/Collection/_apis/wit/fields/System.Id"
+    }
+  ],
+  "sortColumns": [
+    {
+      "field": {
+        "referenceName": "System.ChangedDate",
+        "name": "Changed Date",
+        "url": "https://tfs.example.test/Collection/_apis/wit/fields/System.ChangedDate"
+      },
+      "descending": true
+    }
+  ],
+  "workItems": [
+    {
+      "id": 90201,
+      "url": "https://tfs.example.test/Collection/00000000-0000-0000-0000-000000000001/_apis/wit/workItems/90201"
+    },
+    {
+      "id": 90202,
+      "url": "https://tfs.example.test/Collection/00000000-0000-0000-0000-000000000001/_apis/wit/workItems/90202"
+    }
+  ]
+}

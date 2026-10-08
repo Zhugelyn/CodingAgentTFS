@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "ArioCodingAgent: харнесс из трёх агентов (analyst, developer, reviewer) на OpenHands SDK"
 requires-python = ">=3.13"
 dependencies = [
+    "httpx>=0.28",
     "openhands-sdk>=1.51.0",
     "psutil>=7.2.2",
     "pydantic>=2.7",

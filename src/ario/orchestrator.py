@@ -109,6 +109,7 @@ class Orchestrator:
                 self._settings.rx_path,
                 self._guardrails.config.env,
                 self._settings.base_branch,
+                self._settings.branch_template,
             )
             try:
                 repo.ensure_clean()
@@ -214,7 +215,7 @@ class Orchestrator:
         path = self._tickets.path(ticket_id, "in-progress")
         try:
             ticket = load_ticket(path)
-            if ticket.id != ticket_id:  # иначе тикет мог бы войти в чужую ветку ai/<другой id>
+            if ticket.id != ticket_id:  # иначе тикет мог бы войти в ветку другого тикета
                 raise TicketError(
                     f"id в файле ({ticket.id}) не совпадает с именем файла ({ticket_id})"
                 )

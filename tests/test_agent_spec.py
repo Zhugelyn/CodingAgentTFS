@@ -73,3 +73,18 @@ def test_skill_with_inline_command_is_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(SpecError, match="!`"):
         load_agent_spec(project, "analyst")
+
+
+def test_skill_in_group_folder(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "[x](../../skills/review-skills/rx-arch/SKILL.md)")
+    folder = project / "skills" / "review-skills" / "rx-arch"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text("---\nname: rx-arch\ndescription: d\n---\nтело", "utf-8")
+    spec = load_agent_spec(project, "analyst")
+    assert [p.parent.name for p in spec.skill_paths] == ["rx-arch"]
+
+
+def test_skill_group_traversal_is_rejected(tmp_path: Path) -> None:
+    project = make_project(tmp_path, "[x](../../skills/../x/SKILL.md)")
+    with pytest.raises(SpecError, match="Недопустимое"):
+        load_agent_spec(project, "analyst")

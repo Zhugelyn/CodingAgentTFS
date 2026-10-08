@@ -160,6 +160,7 @@ name = "ario"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "openhands-sdk" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -181,6 +182,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28" },
     { name = "openhands-sdk", specifier = ">=1.51.0" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "pydantic", specifier = ">=2.7" },

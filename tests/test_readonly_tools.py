@@ -221,3 +221,25 @@ def test_mangled_sdk_meta_fields_are_dropped() -> None:
         {"path": "a.cs", "security_risk": "LOW", "security_risk_low": "x", "summaryCheck": "y"}
     )
     assert action.path == "a.cs"
+
+
+def test_repeated_read_returns_hint_until_file_changes(tmp_path: Path) -> None:
+    from ario.agents.readonly_tools import ReadFileAction, ReadFileExecutor
+    from ario.guardrails import Guardrails
+    from tests.conftest import REPO_ROOT
+
+    root = tmp_path / "rx"
+    root.mkdir()
+    (root / "A.cs").write_text("\n".join(f"line {i}" for i in range(1, 50)), encoding="utf-8")
+    guard = Guardrails.load(REPO_ROOT / "config" / "guardrails.yaml").path_guard(root)
+    reader = ReadFileExecutor(root, guard)
+    action = ReadFileAction(path="A.cs", limit=10)
+    first = reader(action)
+    assert "line 1" in first.text
+    again = reader(action)  # тот же вызов подряд: подсказка вместо копии
+    assert again.is_error and "offset=11" in again.text and "line 1" not in again.text
+    assert "line 11" in reader(ReadFileAction(path="A.cs", offset=11, limit=10)).text
+    # после изменения файла тот же вызов снова читает файл (проверка собственной правки)
+    assert "line 1" in reader(ReadFileAction(path="A.cs", limit=10)).text
+    (root / "A.cs").write_text("changed\n" + "x\n" * 60, encoding="utf-8")
+    assert "changed" in reader(ReadFileAction(path="A.cs", limit=10)).text

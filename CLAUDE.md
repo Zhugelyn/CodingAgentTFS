@@ -1,6 +1,6 @@
 # ArioCodingAgent
 
-Харнесс из трёх агентов (analyst → developer → reviewer) на OpenHands SDK: разбирает тикет из папки и оставляет ветку `ai/<id>` в репозитории RX. Оркестратор (`src/ario/orchestrator.py`) сам LLM не использует.
+Харнесс из трёх агентов (analyst → developer → reviewer) на OpenHands SDK: разбирает тикет из папки и оставляет ветку тикета (`BRANCH_TEMPLATE`, по умолчанию `ai/<id>`) в репозитории RX. Оркестратор (`src/ario/orchestrator.py`) сам LLM не использует.
 
 ## Команды
 - `uv sync` — зависимости

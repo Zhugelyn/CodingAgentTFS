@@ -1,0 +1,21 @@
+# Набор evals: ожидаемые исходы тикетов (формат — в src/ario/evals.py).
+# Порядок важен: кейсы, которые правят RX, идут последними (после правок дерево RX не чистое).
+cases:
+  "90102":   # слишком мало данных: analyst должен запросить дополнительные данные
+    outcome: needs-human
+    analysis: needs_info
+    edited: false
+    max_steps: 15
+  "90103":   # в обсуждении решение «так задумано»: analyst должен отказать по обсуждению
+    outcome: needs-human
+    analysis: unsuitable
+    edited: false
+    max_steps: 25
+  "90101":   # ясный маленький баг в одном месте: полный цикл до одобренной правки со сборкой
+    outcome: done
+    analysis: suitable
+    review: approve
+    build_ok: true
+    edited: true
+    max_seconds: 1500
+    max_prompt_tokens: 600000

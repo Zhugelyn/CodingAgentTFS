@@ -114,3 +114,36 @@ def load_ticket(path: Path) -> Ticket:
     except (OSError, UnicodeDecodeError) as e:
         raise TicketError(f"Не удалось прочитать файл тикета: {e}") from e
     return parse_ticket(text)
+
+
+def _escape_headings(text: str) -> str:
+    """Строка, начинающаяся с `#`, стала бы заголовком секции файла: экранируем."""
+    return "\n".join("\\" + line if line.startswith("#") else line for line in text.split("\n"))
+
+
+def render_ticket(ticket: Ticket) -> str:
+    """Собирает файл `<id>.md` формата D01 (обратное к `parse_ticket`)."""
+    meta: dict[str, Any] = {"id": ticket.id, "type": ticket.type, "title": ticket.title}
+    optional: dict[str, Any] = {
+        "state": ticket.state,
+        "area": ticket.area,
+        "iteration": ticket.iteration,
+        "priority": ticket.priority,
+        "severity": ticket.severity,
+        "tags": ticket.tags,
+    }
+    meta.update({key: value for key, value in optional.items() if value not in (None, [])})
+    meta["source"] = ticket.source
+    front = yaml.safe_dump(
+        meta, allow_unicode=True, sort_keys=False, default_flow_style=False, width=10_000
+    ).rstrip("\n")
+    parts = [f"---\n{front}\n---", "## Description", _escape_headings(ticket.description)]
+    if ticket.acceptance_criteria:
+        parts += ["", "## Acceptance Criteria", _escape_headings(ticket.acceptance_criteria)]
+    if ticket.discussion:
+        parts += ["", "## Discussion"]
+        for comment in ticket.discussion:
+            author = " ".join(comment.author.split())
+            date = " ".join(comment.date.split())
+            parts += [f"### {author} · {date}", _escape_headings(comment.text)]
+    return "\n".join(parts) + "\n"

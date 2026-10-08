@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from ario.agents.verdicts import VerdictError
-from ario.errors import InjectionDetected, LimitExceeded, StageFailed
+from ario.errors import InjectionDetected, LimitExceeded, StageFailed, StepLimitReached
 from ario.guardrails import Deadline, InjectionScanner, TokenBudget
 from ario.trace import TraceWriter
 
 MAX_TRACE_TEXT = 20_000
+WRAP_UP_STEPS = 3  # шагов на финальный запрос после исчерпания лимита
+# доли лимита шагов, на которых агенту напоминают о бюджете (сообщение дописывается в конец истории)
+BUDGET_NUDGES = (0.5, 0.8)
+WRAP_UP_MESSAGE = (
+    "Лимит шагов исчерпан, больше исследовать нельзя. Немедленно вызови finish с итоговым "
+    "ответом в том формате, который требует твоя роль, по тому, что ты уже выяснил. "
+    "Не вызывай другие инструменты. Всё, что не успел проверить, не придумывай: "
+    "в плане или отчёте так и напиши «Уточнить: …» или «не проверено»."
+)
 
 
 @dataclass
@@ -65,9 +74,14 @@ class OpenHandsBackend:
     """Запускает агента через OpenHands SDK (`Agent` + `Conversation`)."""
 
     def __init__(
-        self, model: str, api_key: str | None, retry_wait: tuple[int, int] = (8, 64)
+        self,
+        model: str,
+        api_key: str | None,
+        retry_wait: tuple[int, int] = (8, 64),
+        role_models: Mapping[str, str] | None = None,
     ) -> None:
         self._model = model
+        self._role_models = dict(role_models or {})  # роль -> модель, иначе общая `model`
         self._api_key = api_key
         self._retry_wait = retry_wait  # (минимум, максимум) секунд между повторами запроса
 
@@ -97,7 +111,7 @@ class OpenHandsBackend:
             )
 
         llm = LLM(
-            model=self._model,
+            model=self._role_models.get(request.role, self._model),
             api_key=SecretStr(self._api_key) if self._api_key else None,
             num_retries=request.model_retries,
             retry_min_wait=self._retry_wait[0],
@@ -142,6 +156,32 @@ class OpenHandsBackend:
                 "completion_total": int(usage.completion_tokens),
             }
 
+        edits = 0  # сколько раз агент менял файлы
+        nudged: set[float] = set()
+
+        def budget_nudge() -> None:
+            """Напоминание о бюджете шагов: модель сама шаги не считает и застревает в разведке."""
+            for share in BUDGET_NUDGES:
+                if share in nudged or steps < request.max_steps * share or stop:
+                    continue
+                nudged.add(share)
+                left = max(request.max_steps - steps, 0)
+                if share == BUDGET_NUDGES[0]:
+                    advice = (
+                        "Правок ещё нет: прекращай разведку и внеси простейшее исправление в "
+                        "границах правил; допущения опиши в итоговом ответе."
+                        if role == "developer" and not edits
+                        else "Если информации уже достаточно, переходи к итоговому ответу; "
+                        "не повторяй похожие поиски."
+                    )
+                else:
+                    advice = "Заверши работу и дай итоговый ответ."
+                trace.event("budget_nudge", stage=stage, agent=role, steps=steps, left=left)
+                conversation.send_message(
+                    f"Бюджет шагов: использовано {steps} из {request.max_steps}, "
+                    f"осталось около {left}. {advice}"
+                )
+
         def halt(reason: StageFailed) -> None:
             if not stop:
                 stop.append(reason)
@@ -149,7 +189,7 @@ class OpenHandsBackend:
                 conversation.pause()
 
         def on_event(event: object) -> None:
-            nonlocal steps
+            nonlocal steps, edits
             if isinstance(event, ActionEvent):
                 steps += 1
                 arguments = getattr(event.tool_call, "arguments", "")
@@ -165,6 +205,8 @@ class OpenHandsBackend:
                 )
                 if event.tool_name == "finish":
                     final.append(str(getattr(event.action, "message", "")))
+                if event.tool_name == "edit_file":
+                    edits += 1
             elif isinstance(event, ObservationEvent):
                 text = event.observation.text
                 trace.event(
@@ -196,6 +238,8 @@ class OpenHandsBackend:
                     source=event.source,
                     text=_truncate(text),
                 )
+            if isinstance(event, ActionEvent) and event.tool_name != "finish":
+                budget_nudge()
             try:
                 request.token_budget.check(used_tokens())
                 request.deadline.check()
@@ -213,7 +257,7 @@ class OpenHandsBackend:
             "agent_started",
             stage=stage,
             agent=role,
-            model=self._model,
+            model=self._role_models.get(role, self._model),
             max_steps=request.max_steps,
             tools=request.tool_names,
             skills=[path.parent.name for path in request.skill_paths],
@@ -240,11 +284,19 @@ class OpenHandsBackend:
                     str(ev.detail) for ev in state.events if isinstance(ev, ConversationErrorEvent)
                 )
                 if "maximum iterations" in detail.lower():
-                    raise LimitExceeded(f"Превышен лимит шагов агента {role} ({request.max_steps})")
+                    raise StepLimitReached(
+                        f"Превышен лимит шагов агента {role} ({request.max_steps})"
+                    )
                 raise StageFailed(f"Агент {role} завершился с ошибкой: {detail or 'неизвестно'}")
 
         try:
-            run_once(request.task)
+            try:
+                run_once(request.task)
+            except StepLimitReached:
+                # шаги кончились без ответа: лучше неполный вердикт, чем потерянная работа
+                trace.event("limit_wrap_up", stage=stage, agent=role, steps=steps)
+                conversation.max_iteration_per_run = WRAP_UP_STEPS
+                run_once(WRAP_UP_MESSAGE)
             if stop:
                 raise stop[0]
             if request.validate_final is not None:
@@ -263,6 +315,7 @@ class OpenHandsBackend:
             usage = conversation.conversation_stats.get_combined_metrics().accumulated_token_usage
             prompt = int(usage.prompt_tokens) if usage else 0
             completion = int(usage.completion_tokens) if usage else 0
+            cached = int(usage.cache_read_tokens) if usage else 0
             trace.event(
                 "agent_finished",
                 stage=stage,
@@ -270,6 +323,7 @@ class OpenHandsBackend:
                 steps=steps,
                 prompt_tokens=prompt,
                 completion_tokens=completion,
+                cache_read_tokens=cached,
             )
             conversation.close()
         if stop:

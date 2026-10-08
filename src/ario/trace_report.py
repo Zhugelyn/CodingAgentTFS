@@ -50,6 +50,7 @@ class StageSummary:
     steps: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cache_read_tokens: int = 0  # токены запросов, прочитанные провайдером из кэша
     max_context: int = 0
     tools: Counter[str] = field(default_factory=Counter)
     notes: list[str] = field(default_factory=list)  # ошибки, повторы, срабатывания защит, итоги
@@ -124,6 +125,7 @@ def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
             st.steps += int(data.get("steps") or 0)
             st.prompt_tokens += int(data.get("prompt_tokens") or 0)
             st.completion_tokens += int(data.get("completion_tokens") or 0)
+            st.cache_read_tokens += int(data.get("cache_read_tokens") or 0)
         elif kind == "agent_error":
             st.notes.append(
                 f"ошибка инструмента {data.get('tool')}: {_short(data.get('error'), 110)}"
@@ -173,6 +175,10 @@ def _fmt_seconds(value: float | None) -> str:
     return f"{minutes} мин {seconds:02d} с" if minutes else f"{seconds} с"
 
 
+def _percent(part: int, total: int) -> str:
+    return f"{part * 100 // total}%" if total else "0%"
+
+
 def _fmt_tokens(value: int) -> str:
     return f"{value / 1000:.1f}k" if value >= 1000 else str(value)
 
@@ -202,6 +208,10 @@ def render_summary(s: TraceSummary) -> str:
                 f"    шагов {st.steps}, токены: запросы {_fmt_tokens(st.prompt_tokens)} + "
                 f"ответы {_fmt_tokens(st.completion_tokens)}, максимум контекста "
                 f"{_fmt_tokens(st.max_context)}"
+            )
+            lines.append(
+                f"    из кэша провайдера: {_fmt_tokens(st.cache_read_tokens)} токенов запросов"
+                f" ({_percent(st.cache_read_tokens, st.prompt_tokens)})"
             )
         if st.tools:
             tools = ", ".join(f"{name} ({n})" for name, n in st.tools.most_common())

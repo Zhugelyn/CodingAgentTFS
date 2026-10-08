@@ -1,0 +1,73 @@
+{
+  "id": 90201,
+  "rev": 8,
+  "fields": {
+    "System.Id": 90201,
+    "System.AreaId": 53,
+    "System.AreaPath": "Project\\Area",
+    "System.TeamProject": "Project",
+    "System.NodeName": "Antares",
+    "System.AreaLevel1": "Project",
+    "System.AreaLevel2": "Area",
+    "System.Rev": 8,
+    "System.AuthorizedDate": "2026-10-06T06:52:10.857Z",
+    "System.RevisedDate": "9999-01-01T00:00:00Z",
+    "System.IterationId": 282,
+    "System.IterationPath": "Project\\Iteration 1",
+    "System.IterationLevel1": "SmartInstruments",
+    "System.IterationLevel2": "Iteration 1",
+    "System.WorkItemType": "Bug",
+    "System.State": "Analysis",
+    "System.AssignedTo": {
+      "displayName": "Сидоров Пётр (Sidorov_PS)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000003",
+      "id": "00000000000000000000000000000003",
+      "uniqueName": "DOMAIN\\Sidorov_PS",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=3",
+      "descriptor": "win.fake-3"
+    },
+    "System.CreatedDate": "2026-10-06T06:50:38.17Z",
+    "System.CreatedBy": {
+      "displayName": "Сидоров Пётр (Sidorov_PS)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000003",
+      "id": "00000000000000000000000000000003",
+      "uniqueName": "DOMAIN\\Sidorov_PS",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=3",
+      "descriptor": "win.fake-3"
+    },
+    "System.ChangedDate": "2026-10-06T06:52:10.857Z",
+    "System.ChangedBy": {
+      "displayName": "Сидоров Пётр (Sidorov_PS)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000003",
+      "id": "00000000000000000000000000000003",
+      "uniqueName": "DOMAIN\\Sidorov_PS",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=3",
+      "descriptor": "win.fake-3"
+    },
+    "System.AuthorizedAs": {
+      "displayName": "Сидоров Пётр (Sidorov_PS)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000003",
+      "id": "00000000000000000000000000000003",
+      "uniqueName": "DOMAIN\\Sidorov_PS",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=3",
+      "descriptor": "win.fake-3"
+    },
+    "System.CommentCount": 0,
+    "System.Title": "Тестовый баг 90201. Метод принимает пустое значение параметра",
+    "System.BoardColumn": "Analysis",
+    "System.BoardColumnDone": false,
+    "Microsoft.VSTS.Common.StateChangeDate": "2026-10-06T06:50:41.863Z",
+    "Microsoft.VSTS.Common.Priority": 2,
+    "Microsoft.VSTS.Common.Severity": "3 - Medium",
+    "Microsoft.VSTS.Common.StackRank": 762699947.0,
+    "Microsoft.VSTS.Common.ValueArea": "Business",
+    "Custom.ChangeLevel": "1 - Internal",
+    "Custom.FoundInVersion": "-",
+    "Microsoft.VSTS.TCM.ReproSteps": "<div><b>ПОРЯДОК ДЕЙСТВИЙ:</b><br> </div><span style=\"display:inline !important;\">Вызвать метод API со значением параметра, состоящим из пробелов.</span><br>  <b>НАБЛЮДАЕМЫЙ РЕЗУЛЬТАТ: </b><br><span style=\"display:inline !important;\">Метод возвращает &quot;все записи&quot; вместо ошибки.</span><br> <b>ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:</b><br><span style=\"display:inline !important;\">Возвращается пустой список.&nbsp;</span><br>  <b>ПОЯСНЕНИЕ:</b><br><br>",
+    "Custom.RiskMap": "<b>Затронутые модули:</b><br><br>",
+    "System.Tags": "AI Dev",
+    "System.Reason": "Moved to state Analysis"
+  },
+  "relations": [],
+  "url": "https://tfs.example.test/Collection/00000000-0000-0000-0000-000000000001/_apis/wit/workItems/90201"
+}

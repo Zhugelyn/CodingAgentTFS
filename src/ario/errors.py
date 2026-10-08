@@ -15,6 +15,10 @@ class LimitExceeded(StageFailed):
     """Превышен лимит (шаги, токены, время) или исчерпаны повторы при сбое модели."""
 
 
+class StepLimitReached(LimitExceeded):
+    """Агент исчерпал лимит шагов (итераций), не вызвав finish."""
+
+
 class InjectionDetected(StageFailed):
     """Недоверенный текст сработал на правило injection-сканера."""
 

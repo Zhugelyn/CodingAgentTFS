@@ -1,4 +1,4 @@
-"""Этап reviewer: проверка diff ветки `ai/<id>`, вердикт `review-<n>.json` + `review-<n>.md`."""
+"""Этап reviewer: проверка diff ветки тикета, вердикт `review-<n>.json` + `review-<n>.md`."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from ario.agents.verdicts import (
 from ario.errors import StageFailed
 from ario.fsutil import atomic_write_text
 from ario.orchestrator import Stage, StageContext
-from ario.tools.git import GitRepo, Runner, branch_name
+from ario.tools.git import GitRepo, Runner
 from ario.tools.proc import ToolError, run_process
 
 ROLE = "reviewer"
@@ -65,9 +65,15 @@ def make_reviewer_stage(
             raise StageFailed(str(e)) from e
         development_md = development_path.read_text(encoding="utf-8")
 
-        git = GitRepo(rx, ctx.guardrails.config.env, settings.base_branch, runner=runner)
+        git = GitRepo(
+            rx,
+            ctx.guardrails.config.env,
+            settings.base_branch,
+            settings.branch_template,
+            runner=runner,
+        )
         try:
-            expected = branch_name(ctx.ticket.id)
+            expected = git.branch_for(ctx.ticket.id, ctx.ticket.type)
             current = git.current_branch()
             if current != expected:
                 raise StageFailed(f"Для ревью ожидалась ветка {expected}, сейчас {current or '?'}")

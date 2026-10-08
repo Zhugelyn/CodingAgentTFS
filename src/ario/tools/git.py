@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from ario.branches import DEFAULT_BRANCH_TEMPLATE, branch_name, validate_branch_template
 from ario.errors import StageFailed
 from ario.guardrails.boundaries import clean_env
 from ario.guardrails.config import EnvConfig
@@ -14,7 +15,6 @@ from ario.tools.proc import ProcResult, ToolError, run_process
 
 Runner = Callable[[list[str], Path, float, Mapping[str, str]], ProcResult]
 
-_BRANCH_PREFIX = "ai/"
 _REF = re.compile(r"[\w][\w./-]*")
 MAX_OUTPUT_CHARS = 20_000
 
@@ -24,11 +24,7 @@ class DirtyTreeError(StageFailed):
 
 
 class BranchExistsError(StageFailed):
-    """Ветка `ai/<id>` уже существует: харнесс её не перезаписывает."""
-
-
-def branch_name(ticket_id: str) -> str:
-    return f"{_BRANCH_PREFIX}{ticket_id}"
+    """Ветка тикета уже существует: харнесс её не перезаписывает."""
 
 
 def _truncate(text: str) -> str:
@@ -43,6 +39,7 @@ class GitRepo:
         root: Path,
         env_config: EnvConfig,
         base_branch: str = "master",
+        branch_template: str = DEFAULT_BRANCH_TEMPLATE,
         runner: Runner = run_process,
         timeout: float = 60.0,
     ) -> None:
@@ -53,6 +50,7 @@ class GitRepo:
             "GIT_LITERAL_PATHSPECS": "1",  # `:(top)…`, `:(glob)…` в путях агента не магия git
         }
         self._base = base_branch
+        self._branch_template = validate_branch_template(branch_template)
         self._runner = runner
         self._timeout = timeout
 
@@ -110,9 +108,13 @@ class GitRepo:
             )
 
     # --- ветка тикета ---
-    def create_ticket_branch(self, ticket_id: str) -> str:
-        """Создаёт `ai/<id>` от базовой ветки и переключается на неё. Существующую не трогает."""
-        name = branch_name(ticket_id)
+    def branch_for(self, ticket_id: str, ticket_type: str | None = None) -> str:
+        """Имя ветки тикета по шаблону `BRANCH_TEMPLATE`."""
+        return branch_name(ticket_id, self._branch_template, ticket_type)
+
+    def create_ticket_branch(self, ticket_id: str, ticket_type: str | None = None) -> str:
+        """Создаёт ветку тикета от базовой и переключается на неё. Существующую не трогает."""
+        name = self.branch_for(ticket_id, ticket_type)
         if not _REF.fullmatch(name):
             raise ToolError(f"Недопустимое имя ветки: {name}")
         if self.branch_exists(name):
@@ -125,8 +127,8 @@ class GitRepo:
         self._git("switch", "--create", name, self._base)
         return name
 
-    def ensure_on_ticket_branch(self, ticket_id: str) -> None:
-        expected = branch_name(ticket_id)
+    def ensure_on_ticket_branch(self, ticket_id: str, ticket_type: str | None = None) -> None:
+        expected = self.branch_for(ticket_id, ticket_type)
         actual = self.current_branch()
         if actual != expected:
             raise ToolError(f"Ожидалась ветка {expected}, сейчас {actual or 'detached HEAD'}")

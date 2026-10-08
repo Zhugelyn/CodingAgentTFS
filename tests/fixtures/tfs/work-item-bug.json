@@ -1,0 +1,102 @@
+{
+  "id": 90202,
+  "rev": 21,
+  "fields": {
+    "System.Id": 90202,
+    "System.AreaId": 53,
+    "System.AreaPath": "Project\\Area",
+    "System.TeamProject": "Project",
+    "System.NodeName": "Antares",
+    "System.AreaLevel1": "Project",
+    "System.AreaLevel2": "Area",
+    "System.Rev": 21,
+    "System.AuthorizedDate": "2026-09-24T14:11:25.64Z",
+    "System.RevisedDate": "9999-01-01T00:00:00Z",
+    "System.IterationId": 282,
+    "System.IterationPath": "Project\\Iteration 1",
+    "System.IterationLevel1": "SmartInstruments",
+    "System.IterationLevel2": "Iteration 1",
+    "System.WorkItemType": "Bug",
+    "System.State": "Closed",
+    "System.CreatedDate": "2026-09-16T07:02:38.03Z",
+    "System.CreatedBy": {
+      "displayName": "Иванов Иван (Ivanov_II)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000001",
+      "id": "00000000000000000000000000000001",
+      "uniqueName": "DOMAIN\\Ivanov_II",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=1",
+      "descriptor": "win.fake-1"
+    },
+    "System.ChangedDate": "2026-09-24T14:11:25.64Z",
+    "System.ChangedBy": {
+      "displayName": "Иванов Иван (Ivanov_II)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000001",
+      "id": "00000000000000000000000000000001",
+      "uniqueName": "DOMAIN\\Ivanov_II",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=1",
+      "descriptor": "win.fake-1"
+    },
+    "System.AuthorizedAs": {
+      "displayName": "Иванов Иван (Ivanov_II)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000001",
+      "id": "00000000000000000000000000000001",
+      "uniqueName": "DOMAIN\\Ivanov_II",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=1",
+      "descriptor": "win.fake-1"
+    },
+    "System.CommentCount": 3,
+    "System.Title": "Тестовый баг 90202. Метод принимает пустое значение параметра",
+    "System.BoardColumn": "Closed",
+    "System.BoardColumnDone": false,
+    "Microsoft.VSTS.Common.StateChangeDate": "2026-09-24T14:11:25.64Z",
+    "Microsoft.VSTS.Common.ActivatedDate": "2026-09-23T07:01:20.123Z",
+    "Microsoft.VSTS.Common.ActivatedBy": {
+      "displayName": "Петрова Мария (Petrova_MA)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000002",
+      "id": "00000000000000000000000000000002",
+      "uniqueName": "DOMAIN\\Petrova_MA",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=2",
+      "descriptor": "win.fake-2"
+    },
+    "Microsoft.VSTS.Common.ResolvedDate": "2026-09-24T06:35:49.683Z",
+    "Microsoft.VSTS.Common.ResolvedBy": {
+      "displayName": "Петрова Мария (Petrova_MA)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000002",
+      "id": "00000000000000000000000000000002",
+      "uniqueName": "DOMAIN\\Petrova_MA",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=2",
+      "descriptor": "win.fake-2"
+    },
+    "Microsoft.VSTS.Common.ClosedDate": "2026-09-24T14:11:25.64Z",
+    "Microsoft.VSTS.Common.ClosedBy": {
+      "displayName": "Иванов Иван (Ivanov_II)",
+      "url": "https://tfs.example.test/Collection/_apis/Identities/00000000000000000000000000000001",
+      "id": "00000000000000000000000000000001",
+      "uniqueName": "DOMAIN\\Ivanov_II",
+      "imageUrl": "https://tfs.example.test/Collection/_api/_common/identityImage?id=1",
+      "descriptor": "win.fake-1"
+    },
+    "Microsoft.VSTS.Common.Priority": 2,
+    "Microsoft.VSTS.Common.Severity": "3 - Medium",
+    "Microsoft.VSTS.Common.StackRank": 1999979727.0,
+    "Microsoft.VSTS.Common.ValueArea": "Business",
+    "Custom.ChangeLevel": "1 - Internal",
+    "Custom.FoundInVersion": "26.3.0.12",
+    "Microsoft.VSTS.TCM.ReproSteps": "<div><b>ПОРЯДОК ДЕЙСТВИЙ:</b><br> </div><span style=\"display:inline !important;\">Вызвать метод API со значением параметра, состоящим из пробелов.</span><br>  <b>НАБЛЮДАЕМЫЙ РЕЗУЛЬТАТ: </b><br><span style=\"display:inline !important;\">Метод возвращает &quot;все записи&quot; вместо ошибки.</span><br> <b>ОЖИДАЕМЫЙ РЕЗУЛЬТАТ:</b><br><span style=\"display:inline !important;\">Возвращается пустой список.&nbsp;</span><br>  <b>ПОЯСНЕНИЕ:</b><br><br>",
+    "Custom.RiskMap": "<b>Затронутые модули:</b><br><br>",
+    "System.Tags": "Applied; AI Dev",
+    "System.Parent": 1986,
+    "System.Reason": "Moved to state Closed"
+  },
+  "relations": [
+    {
+      "rel": "System.LinkTypes.Hierarchy-Reverse",
+      "url": "https://tfs.example.test/Collection/00000000-0000-0000-0000-000000000001/_apis/wit/workItems/90100",
+      "attributes": {
+        "isLocked": false,
+        "name": "Parent"
+      }
+    }
+  ],
+  "url": "https://tfs.example.test/Collection/00000000-0000-0000-0000-000000000001/_apis/wit/workItems/90202"
+}

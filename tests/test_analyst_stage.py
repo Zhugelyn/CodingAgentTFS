@@ -90,7 +90,7 @@ def test_request_contains_ticket_discussion_instructions_and_limits(
     assert request.role == "analyst"
     assert request.root == stage_settings.rx_path
     assert request.tool_names == ["read_file"]
-    assert request.max_steps == 20
+    assert request.max_steps == 10
     assert request.instructions.startswith("ОБЩИЕ ПРАВИЛА RX")
     assert "РОЛЬ ANALYST" in request.instructions
     assert "<ticket>" in request.task

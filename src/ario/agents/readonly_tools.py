@@ -274,6 +274,7 @@ class ReadFileExecutor(ToolExecutor[ReadFileAction, TextObservation]):
     def __init__(self, root: Path, guard: PathGuard) -> None:
         self._root = root.resolve()
         self._guard = guard
+        self._last: tuple[str, int, int, int, int] | None = None  # прошлый вызов и состояние файла
 
     def __call__(
         self, action: ReadFileAction, conversation: object | None = None
@@ -289,6 +290,17 @@ class ReadFileExecutor(ToolExecutor[ReadFileAction, TextObservation]):
                 f"Файл слишком большой ({path.stat().st_size} байт); используйте search_text.",
                 is_error=True,
             )
+        info = path.stat()
+        call = (str(path), action.offset, action.limit, info.st_mtime_ns, info.st_size)
+        if call == self._last:
+            # тот же вызов по тому же файлу подряд: точная копия ответа выглядит для SDK как цикл
+            return TextObservation.from_text(
+                "Повторный вызов с теми же аргументами: файл не менялся, результат тот же. "
+                f"Читайте другой фрагмент (например, offset={action.offset + action.limit}) "
+                "или найдите нужное место через search_text.",
+                is_error=True,
+            )
+        self._last = call
         data = path.read_bytes()
         if b"\0" in data[:8000]:
             return TextObservation.from_text(

@@ -1,6 +1,7 @@
 # Планирование и журнал решений — не в репозитории
 /memory.md
 /docs/PLAN.md
+/docs/PlanTfs.md
 /docs/story/
 
 # Секреты и окружение
@@ -31,3 +32,6 @@ dist/
 
 # Спайки (черновой код)
 /spikes/
+
+# Результаты evals (прогоны)
+/evals/runs/
