@@ -1,6 +1,6 @@
 ---
 name: directum-rx-integration-ai-agent
-description: Модуль Sungero.IntegrationAIAgent — MCP-сервер Directum RX для ИИ-помощника (JSON-RPC, инструменты, промпты, ресурсы, контекстные действия). Use when working with HandleMcpRequest, MCP, AIAgentTool, AIAgentRole, AIAgentContextAction, prompts/list, prompts/get, resources/read, "Обсудить с помощником".
+description: Модуль Sungero.IntegrationAIAgent — MCP-сервер Directum RX для ИИ-помощника (JSON-RPC, инструменты, промпты, ресурсы, контекстные действия). Методы prompts/list и prompts/get отдают встроенные промпты и контекстные действия (действия интеллектуального помощника, справочник AIAgentContextAction из Commons). Use when working with HandleMcpRequest, MCP, AIAgentTool, AIAgentRole, AIAgentContextAction, prompts/list, prompts/get, resources/read, "Обсудить с помощником", контекстное действие, название действия помощника.
 ---
 
 # Модуль Sungero.IntegrationAIAgent
@@ -8,6 +8,23 @@ description: Модуль Sungero.IntegrationAIAgent — MCP-сервер Direct
 Модуль работает как MCP-сервер (Model Context Protocol) внутри Directum RX. MCP — это протокол, по которому ИИ-помощник запрашивает данные и вызывает инструменты. Модуль принимает запрос в формате JSON-RPC, выполняет его и возвращает JSON-ответ. В модуле нет своих сущностей. Он использует справочники модуля `Sungero.Commons` (инструменты, роли, контекстные действия).
 
 Код модуля: `D:\Projects\master\RX\src\Packages\Sungero.IntegrationAIAgent`. Подробности о сущностях: [ENTITIES.md](ENTITIES.md).
+
+## Термины: промпт, контекстное действие, действие помощника
+
+Методы `prompts/list` и `prompts/get` отдают не только встроенные промпты (`get_current_user_data`, `discuss`), но и **контекстные действия**: `GetPromptList` склеивает оба списка, `GetContextActionPromptList` берёт действия, `GetContextActionPromptResult` отдаёт выбранное.
+
+Эти названия обозначают одну и ту же вещь:
+- **контекстное действие** (так оно называется в коде и метаданных);
+- **действие интеллектуального помощника** (так оно называется для пользователя, это же его название в списке действий и в списке промптов).
+
+Это запись справочника **`AIAgentContextAction` из модуля `Sungero.Commons`**. Своих сущностей в `IntegrationAIAgent` нет. Поля записи: `Name` (название действия), `Discription` (описание, написание как в метаданных), `MessageText` (текст, который уходит помощнику), `AIAgentRole` (роль помощника), `EntityType` и `OriginalEntityType` (для какого типа сущности действие), `ExternalId` (по нему `prompts/get` находит действие), `Sid` (признак системной записи).
+
+Где что искать:
+- **Как действие попадает в `prompts/list` и как собирается ответ `prompts/get`** (фильтр по типу сущности, роль, ссылка на сущность, `assistantId`): в этом модуле, функции выше.
+- **Сам справочник** (поля, системные записи по `Sid`, запрет правки, копирование, функции `GetAvailableContextActions`, `GetOrCreateContextAction`, `UpdateContextAction`, структура `ContextActionInfo`): в навыке [directum-rx-commons](../directum-rx-commons/SKILL.md) (вызови через `invoke_skill`) и его [ENTITIES.md](../directum-rx-commons/ENTITIES.md).
+- **Встроенные промпты** (`get_current_user_data`, `discuss`) формирует код модуля (`GetBuiltInPromptList`), а не справочник.
+
+Если тикет про название или текст контекстного действия («название действия помощника», название промпта в списке для сущности), сначала определи, какой это промпт: встроенный или контекстное действие. Для контекстного действия причину ищи и в записи справочника (`Name`, `MessageText`), и в `GetContextActionPromptList`/`GetContextActionPromptResult`.
 
 ## Схема
 
@@ -104,6 +121,7 @@ GetResponse: выбор по request.Method
 - `GetEntityTypeMetadata` читает тип сущности только из ссылки с параметрами `type` и `id`.
 - Если `_meta.entityUri` не передан, `prompts/list` возвращает `get_current_user_data` и `discuss`. Если передан, `get_current_user_data` не возвращается.
 - Промпт `discuss` пропадает, если параметр `AIAgentDiscussionEnabled` выключен или роль "Свободное общение с ИИ" закрыта.
+- Контекстные действия в `prompts/list` и `prompts/get` это записи `AIAgentContextAction` из Commons. Системную запись (непустой `Sid`) нельзя править в интерфейсе, кроме состояния; копия не наследует `Sid`, `IsSystem`, `ExternalId`. Подробности: навык `directum-rx-commons`.
 - Тело документа больше 7 340 032 байт (`MaxAllowedDocumentSize`) вызывает исключение.
 - Сущность со строгим доступом (`StrictMode != None`) вызывает `EntityStrictAccessException`. Клиент получает ошибку `ResourceNotFound`.
 - Имена дней недели в `get_current_user_data` только на русском языке.

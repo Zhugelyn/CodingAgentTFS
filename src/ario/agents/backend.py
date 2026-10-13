@@ -11,12 +11,14 @@ from typing import Any, Protocol
 from ario.agents.verdicts import VerdictError
 from ario.errors import InjectionDetected, LimitExceeded, StageFailed, StepLimitReached
 from ario.guardrails import Deadline, InjectionScanner, TokenBudget
+from ario.llm_telemetry import llm_context
 from ario.trace import TraceWriter
 
 MAX_TRACE_TEXT = 20_000
 WRAP_UP_STEPS = 3  # шагов на финальный запрос после исчерпания лимита
 # доли лимита шагов, на которых агенту напоминают о бюджете (сообщение дописывается в конец истории)
 BUDGET_NUDGES = (0.5, 0.8)
+ERROR_STREAK_NUDGE = 2  # столько ошибок одного инструмента подряд, и агенту даётся подсказка
 WRAP_UP_MESSAGE = (
     "Лимит шагов исчерпан, больше исследовать нельзя. Немедленно вызови finish с итоговым "
     "ответом в том формате, который требует твоя роль, по тому, что ты уже выяснил. "
@@ -110,8 +112,9 @@ class OpenHandsBackend:
                 error=_truncate(f"{type(error).__name__}: {error}") if error else None,
             )
 
+        llm_model = self._role_models.get(request.role, self._model)
         llm = LLM(
-            model=self._role_models.get(request.role, self._model),
+            model=llm_model,
             api_key=SecretStr(self._api_key) if self._api_key else None,
             num_retries=request.model_retries,
             retry_min_wait=self._retry_wait[0],
@@ -120,6 +123,10 @@ class OpenHandsBackend:
             timeout=180,
             max_output_tokens=4096,
             temperature=0.0,
+            # OpenRouter возвращает в usage реальную цену запроса (с учётом кэша провайдера)
+            litellm_extra_body=(
+                {"usage": {"include": True}} if llm_model.startswith("openrouter/") else {}
+            ),
         )
         context = AgentContext(
             skills=[Skill.load(p) for p in request.skill_paths],
@@ -145,19 +152,36 @@ class OpenHandsBackend:
             # размер последнего запроса (prompt) — то, что ограничивает лимит контекста
             return int(usage.per_turn_token) if usage else 0
 
-        def token_fields() -> dict[str, int]:
-            """Токены на момент вызова: размер контекста последнего запроса и суммы за прогон."""
-            usage = conversation.conversation_stats.get_combined_metrics().accumulated_token_usage
+        def token_fields() -> dict[str, int | float]:
+            """Токены и цена на момент вызова: контекст последнего запроса и суммы за прогон."""
+            metrics = conversation.conversation_stats.get_combined_metrics()
+            usage = metrics.accumulated_token_usage
             if not usage:
                 return {}
             return {
                 "context_tokens": int(usage.per_turn_token),
                 "prompt_total": int(usage.prompt_tokens),
                 "completion_total": int(usage.completion_tokens),
+                "cost_total": round(float(metrics.accumulated_cost), 6),
             }
 
         edits = 0  # сколько раз агент менял файлы
         nudged: set[float] = set()
+        error_streak: dict[str, int] = {}  # инструмент → ошибок подряд
+
+        def error_nudge(tool: str) -> None:
+            """Модель повторяет сломанный вызов, видя лишь «unparseable JSON»: подсказываем."""
+            streak = error_streak.get(tool, 0) + 1
+            error_streak[tool] = streak
+            if streak != ERROR_STREAK_NUDGE or stop:
+                return
+            trace.event("error_nudge", stage=stage, agent=role, tool=tool, streak=streak)
+            conversation.send_message(
+                f"Вызов инструмента {tool} не удался {streak} раза подряд: аргументы пришли "
+                "невалидными или обрезанными. Не повторяй тот же вызов. Передай шаблон только "
+                "ASCII-символами (часть имени метода или идентификатора, без кириллицы, кавычек и "
+                "обратных косых черт) или поищи по другому слову."
+            )
 
         def budget_nudge() -> None:
             """Напоминание о бюджете шагов: модель сама шаги не считает и застревает в разведке."""
@@ -208,6 +232,7 @@ class OpenHandsBackend:
                 if event.tool_name == "edit_file":
                     edits += 1
             elif isinstance(event, ObservationEvent):
+                error_streak.pop(event.tool_name, None)  # инструмент снова работает
                 text = event.observation.text
                 trace.event(
                     "agent_observation",
@@ -229,6 +254,7 @@ class OpenHandsBackend:
                     tool=getattr(event, "tool_name", None),
                     error=_truncate(str(event.error)),
                 )
+                error_nudge(str(getattr(event, "tool_name", None) or "?"))
             elif isinstance(event, MessageEvent):
                 text = "".join(content_to_str(event.llm_message.content))
                 trace.event(
@@ -269,7 +295,8 @@ class OpenHandsBackend:
             final.clear()
             conversation.send_message(message)
             try:
-                conversation.run()
+                with llm_context(request.trace.ticket_id, stage, role):
+                    conversation.run()
             except ConversationRunError as e:
                 if stop:
                     return
@@ -312,10 +339,12 @@ class OpenHandsBackend:
                     if stop:
                         raise stop[0] from None
         finally:
-            usage = conversation.conversation_stats.get_combined_metrics().accumulated_token_usage
+            metrics = conversation.conversation_stats.get_combined_metrics()
+            usage = metrics.accumulated_token_usage
             prompt = int(usage.prompt_tokens) if usage else 0
             completion = int(usage.completion_tokens) if usage else 0
             cached = int(usage.cache_read_tokens) if usage else 0
+            cost = round(float(metrics.accumulated_cost), 6)
             trace.event(
                 "agent_finished",
                 stage=stage,
@@ -324,6 +353,7 @@ class OpenHandsBackend:
                 prompt_tokens=prompt,
                 completion_tokens=completion,
                 cache_read_tokens=cached,
+                cost_usd=cost,
             )
             conversation.close()
         if stop:

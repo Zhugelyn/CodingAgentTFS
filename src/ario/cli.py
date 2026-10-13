@@ -1,15 +1,17 @@
-"""Командная строка: `ario run <id>`, `ario fetch`, `ario resume`, `ario trace`, `ario eval`."""
+"""Командная строка: `ario run`, `fetch`, `resume`, `trace`, `eval`, `export-otel`."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from ario.agents.backend import OpenHandsBackend
-from ario.config import ConfigError, Settings
+from ario.config import ConfigError, Settings, check_sdk_telemetry
 from ario.fsutil import RunInProgressError
 from ario.guardrails import Guardrails
 from ario.orchestrator import (
@@ -42,6 +44,17 @@ def _build_parser() -> argparse.ArgumentParser:
     fetch.add_argument(
         "--dry-run", action="store_true", help="показать, что будет взято, ничего не записывая"
     )
+    otel = sub.add_parser(
+        "export-otel",
+        help="выгрузить метрики и тайминги трассы тикета в OTLP (Phoenix), без текста",
+    )
+    otel.add_argument("ticket_id")
+    otel.add_argument(
+        "--endpoint", default=None, help="OTLP/HTTP URL (по умолчанию ARIO_OTLP_ENDPOINT)"
+    )
+    otel.add_argument(
+        "--dry-run", action="store_true", help="показать состав спанов, ничего не отправляя"
+    )
     trace = sub.add_parser("trace", help="разбор трассы тикета")
     trace.add_argument("ticket_id")
     trace.add_argument("--steps", action="store_true", help="пошаговая лента вызовов агентов")
@@ -52,20 +65,71 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _trace(settings: Settings, args: argparse.Namespace) -> int:
+def _load_trace_events(
+    settings: Settings, ticket_id: str
+) -> tuple[list[dict[str, Any]], int] | None:
+    """События трассы тикета и число пропущенных строк; None, если трассы нет (ошибка выведена)."""
     from ario.store import validate_ticket_id
-    from ario.trace_report import load_events, render_steps, render_summary, summarize
+    from ario.trace_report import load_events
 
     try:
-        validate_ticket_id(args.ticket_id)
+        validate_ticket_id(ticket_id)
     except InvalidTicketIdError as e:
         print(f"Ошибка: {e}", file=sys.stderr)
-        return 2
-    path = settings.traces_dir / args.ticket_id / "events.jsonl"
+        return None
+    path = settings.traces_dir / ticket_id / "events.jsonl"
     if not path.is_file():
-        print(f"Ошибка: нет трассы тикета {args.ticket_id} ({path})", file=sys.stderr)
-        return 2
+        print(f"Ошибка: нет трассы тикета {ticket_id} ({path})", file=sys.stderr)
+        return None
     events, skipped = load_events(path)
+    return list(events), skipped
+
+
+def _enable_llm_tracing(settings: Settings) -> bool:
+    """Живая выгрузка запросов к модели (с текстом) в локальный Phoenix, решение D07, вариант Б."""
+    import atexit
+
+    from ario import llm_telemetry
+    from ario.guardrails import Guardrails
+    from ario.trace import Masker
+
+    try:
+        endpoint = llm_telemetry.check_llm_content_settings(
+            settings.otlp_endpoint, allow_remote=settings.allow_remote_llm_content
+        )
+        guardrails = Guardrails.load(settings.guardrails_path)
+        masker = Masker.from_environment(
+            os.environ, guardrails.config.env, [settings.openrouter_api_key, settings.tfs_pat]
+        )
+        llm_telemetry.enable(endpoint, masker)
+    except (
+        llm_telemetry.LlmTracingError,
+        OSError,
+        ValueError,
+    ) as e:  # ValueError: схема guardrails
+        print(f"Ошибка настройки: {e}", file=sys.stderr)
+        return False
+    atexit.register(llm_telemetry.shutdown)  # дослать накопленные спаны при выходе
+    print(
+        "Живая выгрузка запросов к модели (с текстом) включена: "
+        f"{settings.otlp_endpoint}, проект {llm_telemetry.LLM_PROJECT}"
+    )
+    return True
+
+
+def _use_system_certificates() -> None:
+    import truststore
+
+    truststore.inject_into_ssl()  # корпоративный прокси и внутренние серверы с собственным CA
+
+
+def _trace(settings: Settings, args: argparse.Namespace) -> int:
+    from ario.trace_report import render_steps, render_summary, summarize
+
+    loaded = _load_trace_events(settings, args.ticket_id)
+    if loaded is None:
+        return 2
+    events, skipped = loaded
     if args.steps:
         print(render_steps(events, args.stage, full=args.full), end="")
     else:
@@ -107,9 +171,7 @@ def _fetch(settings: Settings, args: argparse.Namespace) -> int:
         detail = _CONTROL_CHARS.sub("?", item.detail)
         print(f"[{_FETCH_MARKS[item.status]}] {item.ticket_id}: {detail}", flush=True)
 
-    import truststore
-
-    truststore.inject_into_ssl()  # корпоративный прокси с собственным сертификатом
+    _use_system_certificates()
     store = TicketStore(settings.tickets_dir)
     try:
         with TfsClient(settings.tfs_url, settings.tfs_project, settings.tfs_pat) as client:
@@ -144,6 +206,50 @@ def _fetch(settings: Settings, args: argparse.Namespace) -> int:
     return 1 if report.failed else 0
 
 
+def _export_otel(settings: Settings, args: argparse.Namespace) -> int:
+    from collections import Counter
+
+    from ario.otel_export import ExportError, build_spans, export_spans
+
+    loaded = _load_trace_events(settings, args.ticket_id)
+    if loaded is None:
+        return 2
+    spans = build_spans(loaded[0])
+    if args.dry_run:
+        kinds = Counter(str((s.attributes or {}).get("openinference.span.kind")) for s in spans)
+        print(f"Спанов: {len(spans)} ({', '.join(f'{k}: {n}' for k, n in sorted(kinds.items()))})")
+        print("Текст промптов, мыслей, аргументов и результатов инструментов не экспортируется.")
+        return 0
+    endpoint = args.endpoint or settings.otlp_endpoint
+    if not endpoint:
+        print("Ошибка: укажите --endpoint или ARIO_OTLP_ENDPOINT", file=sys.stderr)
+        return 2
+    _use_system_certificates()
+    try:
+        count = export_spans(spans, endpoint)
+    except ExportError as e:
+        print(f"Ошибка: {e}", file=sys.stderr)
+        return 2
+    print(f"Отправлено спанов: {count} (тикет {args.ticket_id}) в {endpoint}")
+    return 0
+
+
+def _auto_export(settings: Settings, ticket_id: str) -> None:
+    """Автоэкспорт в конце прогона: сбой телеметрии прогон не ломает."""
+    if not settings.otlp_endpoint:
+        return
+    from ario.otel_export import build_spans, export_spans
+
+    try:
+        loaded = _load_trace_events(settings, ticket_id)
+        if loaded and loaded[0]:
+            _use_system_certificates()
+            count = export_spans(build_spans(loaded[0]), settings.otlp_endpoint)
+            print(f"Метрики отправлены в {settings.otlp_endpoint} (спанов: {count})")
+    except Exception as e:  # телеметрия вторична
+        print(f"Предупреждение: экспорт метрик не удался ({type(e).__name__})", file=sys.stderr)
+
+
 def _eval(settings: Settings, args: argparse.Namespace) -> int:
     from ario.evals import CaseResult, run_evals
 
@@ -174,12 +280,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as e:
         print(f"Ошибка настройки: {e}", file=sys.stderr)
         return 2
+    if args.command in ("run", "resume", "eval"):
+        try:
+            check_sdk_telemetry(os.environ)  # SDK не должен слать тексты запросов наружу
+        except ConfigError as e:
+            print(f"Ошибка настройки: {e}", file=sys.stderr)
+            return 2
+    llm_content = args.command in ("run", "resume", "eval") and settings.otlp_llm_content
+    if llm_content and not _enable_llm_tracing(settings):
+        return 2
     if args.command == "trace":
         return _trace(settings, args)
     if args.command == "eval":
         return _eval(settings, args)
     if args.command == "fetch":
         return _fetch(settings, args)
+    if args.command == "export-otel":
+        return _export_otel(settings, args)
     try:
         backend = OpenHandsBackend(
             settings.llm_model, settings.openrouter_api_key, role_models=settings.role_models
@@ -204,6 +321,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Тикет {args.ticket_id} не взят в работу: {e.reason}", file=sys.stderr)
         return 3
     print(f"Тикет {args.ticket_id}: {outcome}")
+    _auto_export(settings, args.ticket_id)
     return 0 if outcome == "done" else 1
 
 

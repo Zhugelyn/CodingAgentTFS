@@ -302,3 +302,30 @@ def test_budget_nudges_are_appended_without_touching_history(
     assert any("использовано 8 из 10" in t for t in texts)
     events = (tmp_path / "traces" / "1" / "events.jsonl").read_text(encoding="utf-8")
     assert events.count('"budget_nudge"') == 2
+
+
+def broken_call(tool: str = "search_text") -> Any:
+    """Ответ модели с обрезанным JSON в аргументах (как у Kimi на кириллице)."""
+    resp = response(tool, {"pattern": "x"})
+    resp.choices[0].message.tool_calls[0].function.arguments = '{"pattern": "'
+    return resp
+
+
+def test_repeated_tool_errors_get_one_hint_and_success_resets_the_streak(
+    rx: Path, tmp_path: Path, script: Callable[..., list[dict[str, Any]]]
+) -> None:
+    calls = script(
+        broken_call(),
+        broken_call(),  # вторая подряд: подсказка
+        broken_call(),  # третья: подсказка не повторяется
+        response("read_file", {"path": "src/A.cs"}),  # успех сбрасывает счётчик
+        broken_call(),
+        finish("ок"),
+    )
+    result = backend().run(make_request(rx, tmp_path, max_steps=20))
+    assert result.final_message == "ок"
+    texts = ["\n".join(str(m) for m in c["messages"]) for c in calls]
+    assert "не удался 2 раза подряд" not in texts[1]  # после первой ошибки подсказки нет
+    assert "не удался 2 раза подряд" in texts[2]
+    events = (tmp_path / "traces" / "1" / "events.jsonl").read_text(encoding="utf-8")
+    assert events.count('"error_nudge"') == 1

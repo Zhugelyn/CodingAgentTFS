@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,6 +27,40 @@ def _branch_template(raw: str | None) -> str:
 
 
 DEFAULT_TFS_MAX_ITEMS = 5
+
+
+def _flag(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in ("1", "true", "yes")
+
+
+# OpenHands SDK сам шлёт трассы со ВСЕМ содержимым запросов (код RX, тикеты), если задана
+# любая из этих переменных; свой безопасный экспорт идёт через ARIO_OTLP_ENDPOINT (решение D07)
+_SDK_TELEMETRY_VARS = (
+    "OTEL_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "LMNR_PROJECT_API_KEY",
+)
+
+
+def check_sdk_telemetry(environ: Mapping[str, str]) -> None:
+    """Отказ, если SDK начнёт слать содержимое запросов во внешнюю телеметрию."""
+    if _flag(environ.get("ARIO_ALLOW_SDK_TELEMETRY")):
+        return
+    found = [
+        name
+        for name, value in environ.items()
+        if value.strip() and (name in _SDK_TELEMETRY_VARS or name.startswith("LMNR_"))
+    ]
+    if found:
+        raise ConfigError(
+            f"Заданы {', '.join(sorted(found))}: SDK отправит во внешнюю телеметрию тексты "
+            "запросов к модели (код RX, тикеты). Уберите переменные или для безопасного "
+            "экспорта метрик используйте ARIO_OTLP_ENDPOINT. Осознанный обход: "
+            "ARIO_ALLOW_SDK_TELEMETRY=1."
+        )
+
+
 ROLES = ("analyst", "developer", "reviewer")  # ANALYST_MODEL, DEVELOPER_MODEL, REVIEWER_MODEL
 
 
@@ -65,6 +100,9 @@ class Settings:
     tfs_pat: str | None = field(default=None, repr=False)  # секрет: не попадает в repr
     tfs_wiql: str | None = None  # пусто: запрос по умолчанию (ario.tfs.fetch.default_wiql)
     tfs_max_items: int = DEFAULT_TFS_MAX_ITEMS  # сколько новых тикетов берёт один `ario fetch`
+    otlp_llm_content: bool = False  # живая выгрузка текста запросов к модели (только локально)
+    allow_remote_llm_content: bool = False  # осознанный обход ограничения «только localhost»
+    otlp_endpoint: str | None = None  # OTLP/HTTP приёмник (Phoenix): автоэкспорт метрик прогона
     # модель роли, если она отличается от `llm_model`: {"analyst": "...", "developer": "..."}
     role_models: dict[str, str] = field(default_factory=dict)
 
@@ -102,6 +140,9 @@ class Settings:
             tfs_project=(os.environ.get("TFS_PROJECT") or "").strip() or None,
             tfs_pat=(os.environ.get("TFS_PAT") or "").strip() or None,
             tfs_wiql=(os.environ.get("TFS_WIQL") or "").strip() or None,
+            otlp_endpoint=(os.environ.get("ARIO_OTLP_ENDPOINT") or "").strip() or None,
+            otlp_llm_content=_flag(os.environ.get("ARIO_OTLP_LLM_CONTENT")),
+            allow_remote_llm_content=_flag(os.environ.get("ARIO_ALLOW_REMOTE_LLM_CONTENT")),
             tfs_max_items=_positive_int(
                 "TFS_MAX_ITEMS", os.environ.get("TFS_MAX_ITEMS"), DEFAULT_TFS_MAX_ITEMS
             ),

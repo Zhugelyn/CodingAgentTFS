@@ -50,6 +50,7 @@ class StageSummary:
     steps: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cost_usd: float = 0.0  # цена этапа по данным провайдера
     cache_read_tokens: int = 0  # токены запросов, прочитанные провайдером из кэша
     max_context: int = 0
     tools: Counter[str] = field(default_factory=Counter)
@@ -126,6 +127,7 @@ def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
             st.prompt_tokens += int(data.get("prompt_tokens") or 0)
             st.completion_tokens += int(data.get("completion_tokens") or 0)
             st.cache_read_tokens += int(data.get("cache_read_tokens") or 0)
+            st.cost_usd += float(data.get("cost_usd") or 0)
         elif kind == "agent_error":
             st.notes.append(
                 f"ошибка инструмента {data.get('tool')}: {_short(data.get('error'), 110)}"
@@ -175,6 +177,10 @@ def _fmt_seconds(value: float | None) -> str:
     return f"{minutes} мин {seconds:02d} с" if minutes else f"{seconds} с"
 
 
+def _fmt_usd(value: float) -> str:
+    return f"${value:.4f}" if value < 1 else f"${value:.2f}"
+
+
 def _percent(part: int, total: int) -> str:
     return f"{part * 100 // total}%" if total else "0%"
 
@@ -195,6 +201,9 @@ def render_summary(s: TraceSummary) -> str:
     lines.append(
         f"Запусков: {s.runs}" + (f", из них возобновлений: {s.resumed}" if s.resumed else "")
     )
+    total_cost = sum(st.cost_usd for st in s.stages)
+    if total_cost:
+        lines.append(f"Цена по данным провайдера (все попытки): {_fmt_usd(total_cost)}")
     if s.skipped_lines:
         lines.append(f"Пропущено повреждённых строк трассы: {s.skipped_lines}")
     lines.append("")
@@ -211,7 +220,8 @@ def render_summary(s: TraceSummary) -> str:
             )
             lines.append(
                 f"    из кэша провайдера: {_fmt_tokens(st.cache_read_tokens)} токенов запросов"
-                f" ({_percent(st.cache_read_tokens, st.prompt_tokens)})"
+                f" ({_percent(st.cache_read_tokens, st.prompt_tokens)}), "
+                f"цена {_fmt_usd(st.cost_usd)}"
             )
         if st.tools:
             tools = ", ".join(f"{name} ({n})" for name, n in st.tools.most_common())

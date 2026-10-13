@@ -62,6 +62,7 @@ class CaseResult:
     seconds: float = 0.0
     steps: int = 0
     prompt_tokens: int = 0
+    cost_usd: float = 0.0
     completion_tokens: int = 0
     max_context: int = 0
     llm_retries: int = 0
@@ -115,6 +116,7 @@ def collect(case_id: str, outcome: str, reason: str | None, data_dir: Path) -> C
         result.seconds = summary.total_seconds or 0.0
         result.steps = sum(s.steps for s in stages)
         result.prompt_tokens = sum(s.prompt_tokens for s in stages)
+        result.cost_usd = sum(s.cost_usd for s in stages)
         result.completion_tokens = sum(s.completion_tokens for s in stages)
         result.max_context = max((s.max_context for s in stages), default=0)
         result.llm_retries = sum(1 for e in events if e["kind"] == "llm_retry")
@@ -261,16 +263,16 @@ def render_report(results: list[CaseResult]) -> str:
     lines += ["", "## Кейсы", ""]
     lines.append(
         "| Кейс | Итог | Проверки | Время | Шаги | Токены (запросы+ответы) | Макс. контекст "
-        "| Повторы | Ошибки инстр. |"
+        "| Цена | Повторы | Ошибки инстр. |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for r in results:
         ok = sum(c.ok for c in r.checks)
         mark = "PASS" if r.passed else "FAIL"
         lines.append(
             f"| {r.case_id} | {r.outcome} | {mark} {ok}/{len(r.checks)} | {_fmt_time(r.seconds)} | "
             f"{r.steps} | {_fmt_k(r.prompt_tokens)}+{_fmt_k(r.completion_tokens)} | "
-            f"{_fmt_k(r.max_context)} | {r.llm_retries} | {r.tool_errors} |"
+            f"{_fmt_k(r.max_context)} | ${r.cost_usd:.4f} | {r.llm_retries} | {r.tool_errors} |"
         )
     for r in results:
         lines += ["", f"### {r.case_id}"]
@@ -295,6 +297,7 @@ def render_report(results: list[CaseResult]) -> str:
             f"- Шаги агентов: {sum(r.steps for r in results)}",
             f"- Токены: запросы {_fmt_k(sum(r.prompt_tokens for r in results))}, "
             f"ответы {_fmt_k(sum(r.completion_tokens for r in results))}",
+            f"- Цена по данным провайдера: ${sum(r.cost_usd for r in results):.4f}",
             f"- Повторы запросов к модели: {sum(r.llm_retries for r in results)}, "
             f"ошибки инструментов: {sum(r.tool_errors for r in results)}",
         ]

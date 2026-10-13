@@ -44,6 +44,7 @@ EVENT_KINDS: dict[str, str] = {
     "llm_retry": "повтор запроса к модели (rate limit, 5xx, таймаут)",
     "verdict_retry": "итоговый ответ не прошёл проверку, агенту дан один повтор",
     "budget_nudge": "агенту напомнили о бюджете шагов (сообщение в конец истории)",
+    "error_nudge": "инструмент не удался 2 раза подряд: агенту дана подсказка (tool, streak)",
     "limit_wrap_up": "лимит шагов исчерпан: агенту дан короткий финальный запрос на итоговый ответ",
     # результаты этапов
     "analysis_verdict": "вердикт analyst",
@@ -147,6 +148,10 @@ class TraceWriter:
     @property
     def path(self) -> Path:
         return self._path
+
+    @property
+    def ticket_id(self) -> str:
+        return self._ticket_id
 
     def event(
         self,
