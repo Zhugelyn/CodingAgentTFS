@@ -17,6 +17,7 @@ from ario.guardrails import PathGuard
 from ario.guardrails.config import EnvConfig
 from ario.orchestrator import Stage, StageContext
 from ario.repos import NO_REPO, RepoProfile
+from ario.stage_names import development_stage
 from ario.ticket import Ticket
 from ario.tools.build import BuildTool as ProjectBuilder
 from ario.tools.git import GitRepo, Runner
@@ -108,7 +109,7 @@ def make_developer_stage(
     backend: AgentBackend, *, attempt: int = 1, runner: Runner = run_process
 ) -> Stage:
     """`attempt` > 1: доработка по замечаниям reviewer (`review-<attempt-1>.md`)."""
-    name = "development" if attempt == 1 else f"development-{attempt}"
+    name = development_stage(attempt)
 
     def run(ctx: StageContext) -> None:
         repo = ctx.repo

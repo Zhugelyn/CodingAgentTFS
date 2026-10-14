@@ -175,3 +175,12 @@ def render_review_md(review: Review) -> str:
                 f"- **{_SEVERITY_TITLES[issue.severity]}**{where}: {issue.description.strip()}"
             )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def read_review_verdict(run_dir: Path, attempt: int) -> str | None:
+    """Вердикт ревью `attempt` (`approve` или `reject`), если оно уже записано в `runs/<id>/`."""
+    path = run_dir / f"review-{attempt}.json"
+    if not path.is_file():
+        return None
+    verdict = json.loads(path.read_text(encoding="utf-8")).get("verdict")
+    return str(verdict) if verdict else None

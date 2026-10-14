@@ -81,6 +81,14 @@ def _short(text: object, limit: int = 140) -> str:
     return one_line if len(one_line) <= limit else one_line[: limit - 1] + "…"
 
 
+def _board_line(data: dict[str, Any]) -> str:
+    target = f" → {data['to']}" if data.get("to") else ""
+    return (
+        f"{data.get('action')} ({data.get('on')}){target}: {data.get('status')}, "
+        f"{_short(data.get('detail'), 90)}"
+    )
+
+
 def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
     stages: dict[str, StageSummary] = {}
     runs = resumed = 0
@@ -141,6 +149,8 @@ def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
             st.notes.append(f"вердикт не прошёл проверку: {_short(data.get('error'), 110)}")
         elif kind == "guardrail_blocked":
             st.notes.append(f"сработала защита: {_short(data.get('reason'))}")
+        elif kind == "ticket_system":
+            st.notes.append(f"доска: {_board_line(data)}")
         elif kind == "build_output":
             ok = "успешна" if data.get("ok") else f"не удалась, ошибок: {data.get('errors')}"
             st.notes.append(f"сборка {ok}")
@@ -271,6 +281,12 @@ def render_steps(events: list[Event], stage: str | None = None, *, full: bool = 
             lines.append(f"{clock} [{where}] повтор: {_short(data.get('error'), limit)}")
         elif kind == "guardrail_blocked":
             lines.append(f"{clock} [{where}] ЗАЩИТА: {_short(data.get('reason'), 200)}")
+        elif kind == "ticket_system":
+            lines.append(f"{clock} [{where}] доска: {_board_line(data)}")
+        elif kind == "observer_failed":
+            lines.append(
+                f"{clock} [{where}] сбой отчёта на доске: {_short(data.get('reason'), 200)}"
+            )
         elif kind == "build_output":
             lines.append(
                 f"{clock} [{where}] сборка ok={data.get('ok')} ошибок={data.get('errors')}"

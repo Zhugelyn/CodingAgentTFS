@@ -1,0 +1,20 @@
+# Поток «этап → состояние доски» (необязательно): путь в ARIO_TICKET_FLOW. Применяется только при
+# TFS_WRITE=1 и только к тикетам из TFS.
+#
+# Правило смены состояния: to - новое состояние, from - из каких текущих состояний его можно
+# ставить ("*" - из любого). Если человек уже передвинул карточку (состояние не из from), агент её
+# не трогает. Если состояния to нет у типа тикета, оно пропускается (событие в трассе).
+# Имена состояний взяты с доски Antares: New, Analysis, TechDesign, ReadyForDev, ToDo,
+# Development, Acceptance, ReadyForTesting.
+states:
+  analysis_started: {to: Analysis, from: [New]}            # старт analyst
+  analysis_done: {to: ReadyForDev, from: [Analysis]}       # analyst закончил
+  development_started: {to: Development, from: [ReadyForDev, ToDo]}  # старт developer
+  # Включайте review_approved только вместе с push и PR (S17): иначе тикет уйдёт тестировщикам,
+  # а изменения лежат только в локальной ветке.
+  # review_approved: {to: ReadyForTesting, from: [Development]}      # reviewer одобрил
+
+# Комментарии: «нужен человек» (с отметкой автора тикета) и «готово» (итог работы).
+comments:
+  needs_human: true
+  done: true

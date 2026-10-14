@@ -21,7 +21,9 @@ from ario.orchestrator import (
     TicketNotTakenError,
 )
 from ario.pipeline import build_pipeline
+from ario.reporting import build_reporter, write_config_problem
 from ario.store import InvalidTicketIdError, TicketNotFoundError
+from ario.trace import Masker
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -306,8 +308,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         stages = build_pipeline(backend)
         guardrails = Guardrails.load(settings.guardrails_path)
+        if settings.tfs_write:
+            _use_system_certificates()  # корпоративный CA нужен уже на первом переводе состояния
+            if (problem := write_config_problem(settings)) is not None:
+                print(f"Предупреждение: {problem}; запись на доску отключена", file=sys.stderr)
+        masker = Masker.from_environment(
+            os.environ,
+            guardrails.config.env,
+            [settings.openrouter_api_key, settings.tfs_pat, settings.tfs_write_pat],
+        )
         orchestrator = Orchestrator(
-            settings, stages, guardrails, repo_override=getattr(args, "repo", None)
+            settings,
+            stages,
+            guardrails,
+            repo_override=getattr(args, "repo", None),
+            observer=build_reporter(settings, masker.mask_text),
         )
         if args.command == "resume":
             outcome = orchestrator.reopen(args.ticket_id)

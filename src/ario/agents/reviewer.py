@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from ario.agents.backend import AgentBackend, AgentRequest
 from ario.agents.dev_tools import ReviewerToolset
 from ario.agents.prompts import reviewer_task
@@ -13,6 +11,7 @@ from ario.agents.verdicts import (
     VerdictError,
     load_analysis,
     parse_review,
+    read_review_verdict,
     render_analysis_md,
     render_review_md,
 )
@@ -20,6 +19,7 @@ from ario.errors import StageFailed
 from ario.fsutil import atomic_write_text
 from ario.orchestrator import Stage, StageContext
 from ario.repos import NO_REPO
+from ario.stage_names import review_stage
 from ario.tools.git import GitRepo, Runner
 from ario.tools.proc import ToolError, run_process
 
@@ -33,17 +33,13 @@ def _validate(text: str) -> None:
 
 def review_verdict(ctx: StageContext, attempt: int) -> str | None:
     """Вердикт ревью `attempt` (`approve` или `reject`), если оно уже есть."""
-    path = ctx.run_dir / f"review-{attempt}.json"
-    if not path.is_file():
-        return None
-    verdict = json.loads(path.read_text(encoding="utf-8")).get("verdict")
-    return str(verdict) if verdict else None
+    return read_review_verdict(ctx.run_dir, attempt)
 
 
 def make_reviewer_stage(
     backend: AgentBackend, *, attempt: int = 1, runner: Runner = run_process
 ) -> Stage:
-    name = "review" if attempt == 1 else f"review-{attempt}"
+    name = review_stage(attempt)
 
     def run(ctx: StageContext) -> None:
         repo = ctx.repo

@@ -76,8 +76,8 @@ def _positive_int(name: str, raw: str | None, default: int) -> int:
     return value
 
 
-def _repos_path(raw: str | None) -> Path | None:
-    """Путь к repos.yaml только явный (`ARIO_REPOS`): файл рядом не подхватывается сам."""
+def _optional_path(raw: str | None) -> Path | None:
+    """Путь к необязательному файлу настроек только явный: файл рядом не подхватывается сам."""
     return Path(raw.strip()).resolve() if raw and raw.strip() else None
 
 
@@ -104,6 +104,13 @@ class Settings:
     tfs_url: str | None = None  # адрес коллекции Azure DevOps Server, без проекта
     tfs_project: str | None = None
     tfs_pat: str | None = field(default=None, repr=False)  # секрет: не попадает в repr
+    # запись на доску (S16): выключена, пока не задан TFS_WRITE; токен записи можно держать
+    # отдельно от токена чтения (TFS_WRITE_PAT), иначе пишет TFS_PAT
+    tfs_write: bool = False
+    tfs_write_pat: str | None = field(default=None, repr=False)
+    ticket_flow_path: Path | None = (
+        None  # поток «этап → состояние» (образец ticket-flow.yaml.example)
+    )
     tfs_wiql: str | None = None  # пусто: запрос по умолчанию (ario.tfs.fetch.default_wiql)
     tfs_max_items: int = DEFAULT_TFS_MAX_ITEMS  # сколько новых тикетов берёт один `ario fetch`
     otlp_llm_content: bool = False  # живая выгрузка текста запросов к модели (только локально)
@@ -146,13 +153,16 @@ class Settings:
             tfs_project=(os.environ.get("TFS_PROJECT") or "").strip() or None,
             tfs_pat=(os.environ.get("TFS_PAT") or "").strip() or None,
             tfs_wiql=(os.environ.get("TFS_WIQL") or "").strip() or None,
+            tfs_write=_flag(os.environ.get("TFS_WRITE")),
+            tfs_write_pat=(os.environ.get("TFS_WRITE_PAT") or "").strip() or None,
+            ticket_flow_path=_optional_path(os.environ.get("ARIO_TICKET_FLOW")),
             otlp_endpoint=(os.environ.get("ARIO_OTLP_ENDPOINT") or "").strip() or None,
             otlp_llm_content=_flag(os.environ.get("ARIO_OTLP_LLM_CONTENT")),
             allow_remote_llm_content=_flag(os.environ.get("ARIO_ALLOW_REMOTE_LLM_CONTENT")),
             tfs_max_items=_positive_int(
                 "TFS_MAX_ITEMS", os.environ.get("TFS_MAX_ITEMS"), DEFAULT_TFS_MAX_ITEMS
             ),
-            repos_path=_repos_path(os.environ.get("ARIO_REPOS")),
+            repos_path=_optional_path(os.environ.get("ARIO_REPOS")),
             guardrails_path=Path(
                 os.environ.get("ARIO_GUARDRAILS") or "config/guardrails.yaml"
             ).resolve(),

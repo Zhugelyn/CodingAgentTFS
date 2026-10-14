@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ario.config import Settings
 from ario.errors import InjectionDetected, LimitExceeded, StageFailed
@@ -50,6 +51,16 @@ class TicketNotTakenError(RuntimeError):
 Preflight = Callable[[], None]
 
 
+class RunObserver(Protocol):
+    """Наблюдатель за прогоном (например, отчёт на доске). Его сбои прогон не роняют."""
+
+    def stage_started(self, ctx: StageContext, stage: str) -> None: ...
+
+    def stage_finished(self, ctx: StageContext, stage: str) -> None: ...
+
+    def run_finished(self, ctx: StageContext, outcome: str, reason: str | None) -> None: ...
+
+
 @dataclass
 class StageContext:
     ticket: Ticket
@@ -90,8 +101,11 @@ class Orchestrator:
         preflight: Preflight | None = None,
         repos: RepoRegistry | None = None,
         repo_override: str | None = None,
+        observer: RunObserver | None = None,
     ) -> None:
         self._settings = settings
+        self._observer = observer
+        self._ctx: StageContext | None = None  # контекст последнего этапа: для итогового отчёта
         self._repos = repos if repos is not None else RepoRegistry.from_settings(settings)
         self._repo_override = repo_override
         self._guardrails = guardrails or Guardrails.load(settings.guardrails_path)
@@ -99,7 +113,9 @@ class Orchestrator:
         self._stages = list(stages) if stages is not None else default_stages()
         self._states = StateStore(settings.runs_dir)
         self._masker = Masker.from_environment(
-            os.environ, self._guardrails.config.env, [settings.openrouter_api_key]
+            os.environ,
+            self._guardrails.config.env,
+            [settings.openrouter_api_key, settings.tfs_pat, settings.tfs_write_pat],
         )
         self._tickets = TicketStore(settings.tickets_dir, self._masker.mask_text)
         self._work_base = 0.0
@@ -220,6 +236,9 @@ class Orchestrator:
             )
         self._save(state)
         self._tickets.move(ticket_id, "in-progress", final)
+        if self._ctx is not None:
+            ctx = self._ctx
+            self._notify(trace, "run_finished", ctx, final, failure)
         trace.event(
             "run_finished",
             outcome=final,
@@ -228,6 +247,17 @@ class Orchestrator:
         )
         return final
 
+    def _notify(self, trace: TraceWriter, event: str, *args: object) -> None:
+        """Вызывает метод наблюдателя `event`; любой его сбой — только событие в трассе."""
+        if self._observer is None:
+            return
+        try:
+            getattr(self._observer, event)(*args)
+        except Exception as e:
+            trace.event(
+                "observer_failed", reason=self._masker.mask_text(f"{type(e).__name__}: {e}")
+            )
+
     def _save(self, state: RunState) -> None:
         """Сохраняет состояние вместе с накопленным рабочим временем."""
         state.active_seconds = self._work_base + (time.monotonic() - self._work_started)
@@ -235,6 +265,7 @@ class Orchestrator:
 
     def _execute(self, ticket_id: str, state: RunState, trace: TraceWriter) -> str | None:
         """Возвращает причину отказа или `None`, если все этапы выполнены."""
+        self._ctx = None  # итоговый отчёт только по контексту этого тикета, не прошлого
         path = self._tickets.path(ticket_id, "in-progress")
         try:
             ticket = load_ticket(path)
@@ -242,22 +273,19 @@ class Orchestrator:
                 raise TicketError(
                     f"id в файле ({ticket.id}) не совпадает с именем файла ({ticket_id})"
                 )
-            self._guardrails.scanner.check(path.read_text(encoding="utf-8"), "тексте тикета")
         except TicketError as e:
             trace.event("ticket_invalid", reason=str(e))
             return f"Некорректный файл тикета: {e}"
-        except InjectionDetected as e:
-            trace.event("guardrail_blocked", guard="injection", reason=e.reason)
-            return e.reason
 
-        # лимит на тикет считается по накопленному рабочему времени, простои между запусками
-        # (убитый процесс, ночь) его не расходуют
+        # контекст создаётся до проверок тикета, чтобы и отказ на входе (injection, пропавший
+        # профиль) попал в итоговый отчёт на доске
+        repo_error: str | None = None
         try:
             repo = self._repo_of_run(state)
         except RepoSelectionError as e:  # профиль убрали из repos.yaml посреди работы над тикетом
-            trace.event("guardrail_blocked", guard="repo", reason=e.reason)
-            return e.reason
-        trace.event("repo_selected", repo=repo.name if repo is not None else None)
+            repo, repo_error = None, e.reason
+        # лимит на тикет считается по накопленному рабочему времени, простои между запусками
+        # (убитый процесс, ночь) его не расходуют
         deadline = self._guardrails.deadline(state.active_seconds)
         ctx = StageContext(
             ticket,
@@ -274,6 +302,16 @@ class Orchestrator:
             repo,
         )
         ctx.run_dir.mkdir(parents=True, exist_ok=True)
+        self._ctx = ctx
+        try:
+            self._guardrails.scanner.check(path.read_text(encoding="utf-8"), "тексте тикета")
+        except InjectionDetected as e:
+            trace.event("guardrail_blocked", guard="injection", reason=e.reason)
+            return e.reason
+        if repo_error is not None:
+            trace.event("guardrail_blocked", guard="repo", reason=repo_error)
+            return repo_error
+        trace.event("repo_selected", repo=repo.name if repo is not None else None)
         for stage in self._stages:
             if state.stage(stage.name).status == "done":
                 trace.event("stage_skipped", stage=stage.name)
@@ -303,6 +341,7 @@ class Orchestrator:
             state.start_stage(stage.name)
             self._save(state)
             trace.event("stage_started", stage=stage.name)
+            self._notify(trace, "stage_started", ctx, stage.name)
             stage_began = time.monotonic()
             try:
                 stage.run(ctx)
@@ -318,6 +357,7 @@ class Orchestrator:
                     stage=stage.name,
                     seconds=round(time.monotonic() - stage_began, 2),
                 )
+                self._notify(trace, "stage_finished", ctx, stage.name)
                 continue
             state.finish_stage(stage.name, ok=False)
             self._save(state)

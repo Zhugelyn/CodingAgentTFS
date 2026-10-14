@@ -27,6 +27,8 @@ EVENT_KINDS: dict[str, str] = {
     "run_finished": "прогон завершён (outcome, reason, total_seconds)",
     "ticket_invalid": "файл тикета не разобран",
     "repo_selected": "для тикета выбран профиль репозитория (repo)",
+    "ticket_system": "запись на доску (action: state|comment, on, status, detail, to)",
+    "observer_failed": "наблюдатель за прогоном (отчёт на доске) дал сбой; прогон продолжен",
     "ticket_not_taken": "тикет не взят в работу (проверка перед стартом)",
     "stage_started": "этап начат",
     "stage_finished": "этап завершён (seconds)",

@@ -20,9 +20,10 @@ from ario.fsutil import atomic_write_text
 from ario.guardrails import PathGuard
 from ario.orchestrator import Stage, StageContext
 from ario.repos import NO_REPO
+from ario.stage_names import ANALYSIS
 
 ROLE = "analyst"
-STAGE_NAME = "analysis"
+STAGE_NAME = ANALYSIS
 
 
 def _make_validator(guard: PathGuard) -> Callable[[str], None]:

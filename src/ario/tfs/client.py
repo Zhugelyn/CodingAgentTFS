@@ -1,6 +1,9 @@
-"""Клиент Azure DevOps Server (TFS) для чтения тикетов по REST API.
+"""Клиент Azure DevOps Server (TFS) по REST API: чтение тикетов и запись на доску.
 
-Только чтение: GET work item и комментариев, POST запроса WIQL (он ничего не меняет).
+Чтение: GET work item, комментариев и состояний типа, POST запроса WIQL (он ничего не меняет).
+Запись (S16): комментарий и смена состояния. Запись не повторяется при обрыве и 5xx (запрос мог
+дойти, и комментарий задвоится), повторяется только 429. Состояние меняется с проверкой ревизии:
+если тикет за это время изменил человек, TFS откажет, и чужая правка не перезапишется.
 Авторизация по PAT (Basic с пустым именем). Токен нигде не попадает в сообщения об ошибках.
 """
 
@@ -21,7 +24,15 @@ MAX_RESPONSE_BYTES = 5_000_000
 MAX_COMMENT_PAGES = 10
 COMMENTS_PAGE_SIZE = 200
 DEFAULT_TIMEOUT = 30.0
+BOARD_TIMEOUT = (
+    10.0  # запись на доску идёт внутри прогона: недоступная доска не должна его тормозить
+)
 RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+WRITE_RETRY_STATUSES = frozenset(
+    {429}
+)  # запрос точно не выполнен; остальное для записи не повторяем
+JSON_PATCH = "application/json-patch+json"
+BRIEF_FIELDS = "System.State,System.WorkItemType,System.CreatedBy,System.Title"
 DEFAULT_RETRY_WAIT = (1.0, 3.0, 8.0)  # паузы между повторами, их число = число повторов
 
 
@@ -35,6 +46,10 @@ class TfsAuthError(TfsError):
 
 class TfsNotFoundError(TfsError):
     """Нет такого проекта или work item (404)."""
+
+
+class TfsConflictError(TfsError):
+    """Тикет изменился с момента чтения (проверка ревизии не прошла: 409/412)."""
 
 
 def _snippet(body: bytes) -> str:
@@ -133,25 +148,90 @@ class TfsClient:
                 return result
         raise TfsError(f"У work item {item_id} больше {MAX_COMMENT_PAGES} страниц комментариев")
 
+    def work_item_brief(self, item_id: int) -> dict[str, Any]:
+        """Только нужные для записи поля (состояние, тип, автор) и ревизия `rev`."""
+        return self._request(
+            "GET",
+            f"{self._project}/_apis/wit/workitems/{int(item_id)}",
+            {"fields": BRIEF_FIELDS, "api-version": API_VERSION},
+        )
+
+    def type_states(self, item_type: str) -> list[str]:
+        """Имена состояний типа work item (для проверки карты «этап → состояние»)."""
+        data = self._request(
+            "GET",
+            f"{self._project}/_apis/wit/workitemtypes/{quote(item_type, safe='')}/states",
+            {"api-version": API_VERSION},
+        )
+        items = data.get("value")
+        if not isinstance(items, list):
+            raise TfsError("Ответ состояний без списка value")
+        return [str(i["name"]) for i in items if isinstance(i, dict) and i.get("name")]
+
+    def add_comment(self, item_id: int, html: str) -> int:
+        """Добавляет комментарий (HTML) и возвращает его id. Не повторяется при обрыве."""
+        data = self._request(
+            "POST",
+            f"{self._project}/_apis/wit/workItems/{int(item_id)}/comments",
+            {"api-version": COMMENTS_API_VERSION},
+            payload={"text": html},
+            idempotent=False,
+        )
+        comment_id = data.get("id")
+        if not isinstance(comment_id, int) or isinstance(comment_id, bool):
+            raise TfsError("Ответ на добавление комментария без числового id")
+        return comment_id
+
+    def set_state(self, item_id: int, state: str, rev: int) -> None:
+        """Меняет состояние при условии, что ревизия тикета всё ещё `rev` (иначе конфликт)."""
+        patch = [
+            {"op": "test", "path": "/rev", "value": int(rev)},
+            {"op": "add", "path": "/fields/System.State", "value": state},
+        ]
+        self._request(
+            "PATCH",
+            f"{self._project}/_apis/wit/workitems/{int(item_id)}",
+            {"api-version": API_VERSION},
+            payload=patch,
+            content_type=JSON_PATCH,
+            idempotent=False,
+            conflict=True,
+        )
+
     # --- транспорт ----------------------------------------------------------------------------
     def _request(
-        self, method: str, path: str, params: dict[str, Any], payload: Any = None
+        self,
+        method: str,
+        path: str,
+        params: dict[str, Any],
+        payload: Any = None,
+        *,
+        content_type: str | None = None,
+        idempotent: bool = True,
+        conflict: bool = False,
     ) -> dict[str, Any]:
+        retry_statuses = RETRY_STATUSES if idempotent else WRITE_RETRY_STATUSES
         attempts = len(self._retry_wait) + 1
         for attempt in range(attempts):
             last = attempt == attempts - 1
+            body_args: dict[str, Any] = {"json": payload}
+            if content_type is not None:  # json-patch: тело то же, тип другой
+                body_args = {
+                    "content": json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                    "headers": {"Content-Type": content_type},
+                }
             try:
-                with self._http.stream(method, path, params=params, json=payload) as response:
+                with self._http.stream(method, path, params=params, **body_args) as response:
                     body = self._read_limited(response)
             except httpx.TransportError as e:  # таймаут, обрыв, ошибка TLS
-                if last:
+                if last or not idempotent:  # запись могла дойти: повтор задвоил бы её
                     raise TfsError(f"Нет связи с TFS ({type(e).__name__})") from None
                 self._sleep(self._retry_wait[attempt])
                 continue
-            if response.status_code in RETRY_STATUSES and not last:
+            if response.status_code in retry_statuses and not last:
                 self._sleep(self._retry_after(response, self._retry_wait[attempt]))
                 continue
-            return self._parse(response, body, path)
+            return self._parse(response, body, path, conflict)
         raise AssertionError("недостижимо")  # цикл всегда возвращает или бросает
 
     @staticmethod
@@ -174,13 +254,17 @@ class TfsClient:
         return b"".join(chunks)
 
     @staticmethod
-    def _parse(response: httpx.Response, body: bytes, path: str) -> dict[str, Any]:
+    def _parse(
+        response: httpx.Response, body: bytes, path: str, conflict: bool = False
+    ) -> dict[str, Any]:
         status = response.status_code
         where = path.split("?")[0]
         if status in (401, 403):
             raise TfsAuthError(f"TFS отклонил доступ ({status}): проверьте TFS_PAT и его права")
         if status == 404:
             raise TfsNotFoundError(f"Не найдено в TFS: {where}")
+        if conflict and status in (409, 412):  # только PATCH с проверкой ревизии
+            raise TfsConflictError(f"Тикет изменён с момента чтения ({status}): {where}")
         if 300 <= status < 400:
             raise TfsError(f"TFS перенаправил запрос ({status}): проверьте TFS_URL")
         if status >= 400:
