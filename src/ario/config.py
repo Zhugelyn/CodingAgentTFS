@@ -76,6 +76,11 @@ def _positive_int(name: str, raw: str | None, default: int) -> int:
     return value
 
 
+def _repos_path(raw: str | None) -> Path | None:
+    """Путь к repos.yaml только явный (`ARIO_REPOS`): файл рядом не подхватывается сам."""
+    return Path(raw.strip()).resolve() if raw and raw.strip() else None
+
+
 def parse_command(text: str | None) -> tuple[str, ...]:
     """Разбирает строку команды из `.env`; кавычки вокруг частей снимаются, `\\` остаются."""
     if not text or not text.strip():
@@ -91,6 +96,7 @@ class Settings:
     llm_model: str
     openrouter_api_key: str | None
     guardrails_path: Path
+    repos_path: Path | None = None  # профили репозиториев (repos.yaml); нет файла: профиль из .env
     base_branch: str = "master"
     branch_template: str = DEFAULT_BRANCH_TEMPLATE  # имя ветки тикета, например antares/ai-{id}
     project_dir: Path = field(default_factory=Path.cwd)  # AGENTS.md, agents/, skills/
@@ -146,6 +152,7 @@ class Settings:
             tfs_max_items=_positive_int(
                 "TFS_MAX_ITEMS", os.environ.get("TFS_MAX_ITEMS"), DEFAULT_TFS_MAX_ITEMS
             ),
+            repos_path=_repos_path(os.environ.get("ARIO_REPOS")),
             guardrails_path=Path(
                 os.environ.get("ARIO_GUARDRAILS") or "config/guardrails.yaml"
             ).resolve(),

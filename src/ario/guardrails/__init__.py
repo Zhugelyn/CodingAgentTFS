@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from ario.guardrails.boundaries import PathGuard, clean_env
@@ -37,8 +38,12 @@ class Guardrails:
     def load(cls, path: Path) -> Guardrails:
         return cls(load_config(path))
 
-    def path_guard(self, root: Path) -> PathGuard:
-        return PathGuard(root, self.config.paths)
+    def path_guard(self, root: Path, extra_write_deny: Sequence[str] = ()) -> PathGuard:
+        """Границы путей; `extra_write_deny` — правила профиля репозитория сверх общих."""
+        paths = self.config.paths
+        if extra_write_deny:
+            paths = paths.model_copy(update={"write_deny": [*paths.write_deny, *extra_write_deny]})
+        return PathGuard(root, paths)
 
     def deadline(self, elapsed: float = 0.0) -> Deadline:
         return Deadline(self.config.limits.ticket_timeout_seconds, self._clock, elapsed)

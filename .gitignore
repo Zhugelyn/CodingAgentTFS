@@ -38,3 +38,4 @@ dist/
 
 # Данные локального Phoenix (графики прогонов)
 /.phoenix/
+/config/repos.yaml

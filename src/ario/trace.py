@@ -26,6 +26,7 @@ EVENT_KINDS: dict[str, str] = {
     "run_reopened": "тикет возвращён из needs-human командой resume",
     "run_finished": "прогон завершён (outcome, reason, total_seconds)",
     "ticket_invalid": "файл тикета не разобран",
+    "repo_selected": "для тикета выбран профиль репозитория (repo)",
     "ticket_not_taken": "тикет не взят в работу (проверка перед стартом)",
     "stage_started": "этап начат",
     "stage_finished": "этап завершён (seconds)",

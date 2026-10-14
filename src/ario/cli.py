@@ -30,6 +30,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run", help="провести один тикет по потоку")
     run.add_argument("ticket_id")
+    run.add_argument(
+        "--repo", default=None, help="профиль репозитория (иначе выбирается по area path и тегам)"
+    )
     resume = sub.add_parser("resume", help="возобновить тикет из needs-human с упавшего этапа")
     resume.add_argument("ticket_id")
     ev = sub.add_parser("eval", help="прогнать набор тикетов с ожидаемыми исходами и метриками")
@@ -303,12 +306,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         stages = build_pipeline(backend)
         guardrails = Guardrails.load(settings.guardrails_path)
-        orchestrator = Orchestrator(settings, stages, guardrails)
+        orchestrator = Orchestrator(
+            settings, stages, guardrails, repo_override=getattr(args, "repo", None)
+        )
         if args.command == "resume":
             outcome = orchestrator.reopen(args.ticket_id)
         else:
             outcome = orchestrator.run(args.ticket_id)
     except (
+        ConfigError,
         TicketNotFoundError,
         InvalidTicketIdError,
         TicketAlreadyFinishedError,

@@ -188,7 +188,10 @@ def test_broken_rx_path_means_ticket_not_taken(settings: Settings, inbox_ticket:
     with pytest.raises(TicketNotTakenError):
         Orchestrator(broken, [Stage("s", lambda c: None)]).run(inbox_ticket)
     assert (broken.tickets_dir / "inbox" / "43031.md").exists()
-    assert "RX" in (broken.tickets_dir / "inbox" / "43031.comments.md").read_text(encoding="utf-8")
+    assert (
+        "rx"
+        in (broken.tickets_dir / "inbox" / "43031.comments.md").read_text(encoding="utf-8").lower()
+    )
 
 
 def test_diff_can_be_limited_to_one_path_when_the_whole_diff_is_truncated(

@@ -114,7 +114,7 @@ class DeveloperToolset:
 
 # --- обёртки SDK -------------------------------------------------------------------------------
 class EditFileAction(LenientAction):
-    path: str = Field(description="Путь к существующему файлу относительно корня RX")
+    path: str = Field(description="Путь к существующему файлу относительно корня репозитория")
     old_text: str = Field(
         description="Фрагмент файла, который нужно заменить: в точности как в файле, "
         "с отступами; должен встречаться ровно один раз"
@@ -129,7 +129,7 @@ class GitStatusAction(LenientAction):
 class GitDiffAction(LenientAction):
     path: str | None = Field(
         default=None,
-        description="Показать diff только этого файла или папки (относительно корня RX); "
+        description="Показать diff только этого файла или папки (относительно корня репозитория); "
         "нужно, когда общий diff обрезан",
     )
 
@@ -138,7 +138,7 @@ class BuildAction(LenientAction):
     project: str | None = Field(
         default=None,
         description="Только если описание инструмента требует проект: путь к .csproj или файлу "
-        "внутри проекта, относительно корня RX. При сборке всего решения не нужен.",
+        "внутри проекта, относительно корня репозитория. При сборке всего решения не нужен.",
     )
 
 

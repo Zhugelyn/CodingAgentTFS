@@ -11,12 +11,12 @@ from ario.agents.dev_tools import DeveloperToolset
 from ario.agents.prompts import developer_task
 from ario.agents.spec import SpecError, load_agent_spec
 from ario.agents.verdicts import Analysis, VerdictError, load_analysis, render_analysis_md
-from ario.config import Settings
 from ario.errors import StageFailed
 from ario.fsutil import atomic_write_text
 from ario.guardrails import PathGuard
 from ario.guardrails.config import EnvConfig
 from ario.orchestrator import Stage, StageContext
+from ario.repos import NO_REPO, RepoProfile
 from ario.ticket import Ticket
 from ario.tools.build import BuildTool as ProjectBuilder
 from ario.tools.git import GitRepo, Runner
@@ -95,11 +95,13 @@ def _load_analysis(ctx: StageContext) -> Analysis:
 
 
 def _make_builder(
-    settings: Settings, rx: Path, guard: PathGuard, env: EnvConfig, runner: Runner
+    repo: RepoProfile, guard: PathGuard, env: EnvConfig, runner: Runner
 ) -> ProjectBuilder:
-    command = settings.build_command
+    command = repo.build_command
     cwd = Path(command[0]).parent if command and Path(command[0]).is_absolute() else None
-    return ProjectBuilder(rx, guard, env, runner=runner, command=command or None, command_cwd=cwd)
+    return ProjectBuilder(
+        repo.path, guard, env, runner=runner, command=command or None, command_cwd=cwd
+    )
 
 
 def make_developer_stage(
@@ -109,12 +111,12 @@ def make_developer_stage(
     name = "development" if attempt == 1 else f"development-{attempt}"
 
     def run(ctx: StageContext) -> None:
-        settings = ctx.settings
-        if settings.rx_path is None:
-            raise StageFailed("Не задан RX_PATH: developer не знает, где править код")
-        rx = settings.rx_path
+        repo = ctx.repo
+        if repo is None:
+            raise StageFailed(f"{NO_REPO}: developer не знает, где править код")
+        rx = repo.path
         try:
-            spec = load_agent_spec(settings.project_dir, ROLE)
+            spec = load_agent_spec(repo.knowledge_dir, ROLE)
         except SpecError as e:
             raise StageFailed(f"Ошибка конфигурации агента {ROLE}: {e}") from e
         analysis = _load_analysis(ctx)
@@ -133,11 +135,11 @@ def make_developer_stage(
             scanner.check(feedback, "замечаниях reviewer")
 
         env = ctx.guardrails.config.env
-        guard = ctx.guardrails.path_guard(rx)
-        git = GitRepo(rx, env, settings.base_branch, settings.branch_template, runner=runner)
+        guard = ctx.guardrails.path_guard(rx, repo.write_deny_extra)
+        git = GitRepo(rx, env, repo.base_branch, repo.branch_template, runner=runner)
         branch = _prepare_branch(git, ctx.ticket, attempt, ctx.trace, name)
         toolset = DeveloperToolset(
-            rx, guard, git, _make_builder(settings, rx, guard, env, runner), ctx.trace, name
+            rx, guard, git, _make_builder(repo, guard, env, runner), ctx.trace, name
         )
         request = AgentRequest(
             role=ROLE,

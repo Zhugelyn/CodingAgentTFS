@@ -19,6 +19,7 @@ from ario.errors import GuardViolation, StageFailed
 from ario.fsutil import atomic_write_text
 from ario.guardrails import PathGuard
 from ario.orchestrator import Stage, StageContext
+from ario.repos import NO_REPO
 
 ROLE = "analyst"
 STAGE_NAME = "analysis"
@@ -49,20 +50,20 @@ def _make_validator(guard: PathGuard) -> Callable[[str], None]:
 
 def make_analyst_stage(backend: AgentBackend) -> Stage:
     def run(ctx: StageContext) -> None:
-        settings = ctx.settings
-        if settings.rx_path is None:
-            raise StageFailed("Не задан RX_PATH: analyst не знает, где искать код")
+        repo = ctx.repo
+        if repo is None:
+            raise StageFailed(f"{NO_REPO}: analyst не знает, где искать код")
         try:
-            spec = load_agent_spec(settings.project_dir, ROLE)
+            spec = load_agent_spec(repo.knowledge_dir, ROLE)
         except SpecError as e:
             raise StageFailed(f"Ошибка конфигурации агента {ROLE}: {e}") from e
 
-        guard = ctx.guardrails.path_guard(settings.rx_path)
+        guard = ctx.guardrails.path_guard(repo.path, repo.write_deny_extra)
         validate = _make_validator(guard)
         request = AgentRequest(
             role=ROLE,
-            root=settings.rx_path,
-            toolset=ReadonlyToolset(settings.rx_path, guard),
+            root=repo.path,
+            toolset=ReadonlyToolset(repo.path, guard),
             instructions=spec.instructions,
             task=analyst_task(ctx.ticket),
             tool_names=spec.tools,

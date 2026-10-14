@@ -130,7 +130,8 @@ class FindFilesAction(LenientAction):
         description='Glob-шаблон, например "**/*.cs" или "Sungero.Docflow.Server/**/*Functions.cs"'
     )
     path: str | None = Field(
-        default=None, description="Папка поиска относительно корня RX; по умолчанию весь RX"
+        default=None,
+        description="Папка поиска относительно корня репозитория; по умолчанию весь репозиторий",
     )
 
 
@@ -175,7 +176,8 @@ class SearchTextAction(LenientAction):
         description="Регулярное выражение (Python re) для поиска по содержимому файлов"
     )
     path: str | None = Field(
-        default=None, description="Папка или файл относительно корня RX; по умолчанию весь RX"
+        default=None,
+        description="Папка или файл относительно корня репозитория; по умолчанию весь репозиторий",
     )
     include: str | None = Field(
         default=None, description='Glob по имени файла, например "*.cs" или "*.mtd"'
@@ -263,7 +265,7 @@ class SearchTextExecutor(ToolExecutor[SearchTextAction, TextObservation]):
 
 # --- read_file ---------------------------------------------------------------------------------
 class ReadFileAction(LenientAction):
-    path: str = Field(description="Путь к файлу относительно корня RX")
+    path: str = Field(description="Путь к файлу относительно корня репозитория")
     offset: int = Field(default=1, ge=1, description="Номер первой строки (с 1)")
     limit: int = Field(
         default=DEFAULT_READ_LINES, ge=1, le=1000, description="Сколько строк вернуть"
@@ -381,7 +383,8 @@ def register_readonly_tools(root: Path, guard: PathGuard) -> None:
             FindFilesTool,
             FindFilesAction,
             FindFilesExecutor(root, guard),
-            "Поиск файлов по glob-шаблону (пути относительно корня RX). Возвращает до 100 путей.",
+            "Поиск файлов по glob-шаблону (пути относительно корня репозитория). "
+            "Возвращает до 100 путей.",
             "find_files",
         ),
     )
@@ -402,7 +405,7 @@ def register_readonly_tools(root: Path, guard: PathGuard) -> None:
             ReadFileTool,
             ReadFileAction,
             ReadFileExecutor(root, guard),
-            "Чтение файла по частям с номерами строк. Пути относительно корня RX; "
+            "Чтение файла по частям с номерами строк. Пути относительно корня репозитория; "
             "для больших файлов используйте offset и limit.",
             "read_file",
         ),

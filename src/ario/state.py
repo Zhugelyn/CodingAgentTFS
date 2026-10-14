@@ -28,6 +28,7 @@ class RunState(BaseModel):
     started_at: str = Field(default_factory=utc_now)  # справочно; лимит времени считается иначе
     active_seconds: float = 0.0  # накопленное время работы над тикетом без простоев между запусками
     reason: str | None = None
+    repo: str | None = None  # профиль репозитория, выбранный при старте тикета (S15)
     stages: dict[str, StageState] = Field(default_factory=dict)
 
     def stage(self, name: str) -> StageState:

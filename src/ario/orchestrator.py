@@ -12,6 +12,7 @@ from ario.config import Settings
 from ario.errors import InjectionDetected, LimitExceeded, StageFailed
 from ario.fsutil import RunLock
 from ario.guardrails import Deadline, Guardrails
+from ario.repos import RepoProfile, RepoRegistry, RepoSelectionError
 from ario.state import RunState, StateStore
 from ario.store import Folder, TicketStore, validate_ticket_id
 from ario.ticket import Ticket, TicketError, load_ticket
@@ -60,6 +61,7 @@ class StageContext:
     deadline: Deadline
     add_comment: Callable[[str, str, str], None]  # (агент, вердикт, текст) → <id>.comments.md
     mask: Callable[[str], str]  # скрывает секреты в тексте, который пишется в артефакты
+    repo: RepoProfile | None = None  # репозиторий тикета; `None`: репозиторий не настроен
 
 
 @dataclass(frozen=True)
@@ -86,10 +88,14 @@ class Orchestrator:
         stages: Sequence[Stage] | None = None,
         guardrails: Guardrails | None = None,
         preflight: Preflight | None = None,
+        repos: RepoRegistry | None = None,
+        repo_override: str | None = None,
     ) -> None:
         self._settings = settings
+        self._repos = repos if repos is not None else RepoRegistry.from_settings(settings)
+        self._repo_override = repo_override
         self._guardrails = guardrails or Guardrails.load(settings.guardrails_path)
-        self._preflight = preflight or self._default_preflight
+        self._preflight = preflight
         self._stages = list(stages) if stages is not None else default_stages()
         self._states = StateStore(settings.runs_dir)
         self._masker = Masker.from_environment(
@@ -102,19 +108,33 @@ class Orchestrator:
     def _trace(self, ticket_id: str, trace_id: str) -> TraceWriter:
         return TraceWriter(self._settings.traces_dir, ticket_id, trace_id, self._masker)
 
-    def _default_preflight(self) -> None:
-        """Чистое дерево RX: чужие незакоммиченные изменения не должны попасть в работу агента."""
-        if self._settings.rx_path is not None:
-            repo = GitRepo(
-                self._settings.rx_path,
-                self._guardrails.config.env,
-                self._settings.base_branch,
-                self._settings.branch_template,
+    def _check_repo(self, repo: RepoProfile | None) -> None:
+        """Чистое дерево репозитория: чужие незакоммиченные изменения не должны попасть в работу."""
+        if self._preflight is not None:
+            self._preflight()
+            return
+        if repo is not None:
+            git = GitRepo(
+                repo.path, self._guardrails.config.env, repo.base_branch, repo.branch_template
             )
             try:
-                repo.ensure_clean()
-            except ToolError as e:  # неверный RX_PATH, нет git и т.п.
-                raise StageFailed(f"Не удалось проверить рабочее дерево RX: {e}") from e
+                git.ensure_clean()
+            except ToolError as e:  # неверный путь, нет git и т.п.
+                raise StageFailed(
+                    f"Не удалось проверить рабочее дерево репозитория {repo.name}: {e}"
+                ) from e
+
+    def _repo_of_run(self, state: RunState) -> RepoProfile | None:
+        """Профиль начатого прогона: из состояния; прогон, начатый до профилей, — по умолчанию."""
+        return self._repos.get(state.repo) if state.repo is not None else self._repos.default
+
+    def _repo_for_new_ticket(self, ticket_id: str) -> RepoProfile | None:
+        """Профиль нового тикета по правилам или `--repo`."""
+        try:
+            ticket = load_ticket(self._tickets.path(ticket_id, "inbox"))
+        except (TicketError, OSError):
+            return self._repos.default  # некорректный тикет отклонит `_execute`
+        return self._repos.select(ticket, self._repo_override)
 
     def run(self, ticket_id: str) -> Folder:
         """Проводит тикет по этапам; возвращает итоговую папку (`done` или `needs-human`).
@@ -171,11 +191,14 @@ class Orchestrator:
             state = RunState(ticket_id=ticket_id)  # новая подача: старый прогон не переиспользуем
             trace = self._trace(ticket_id, state.trace_id)
             try:
-                self._preflight()
-            except StageFailed as e:
+                repo = self._repo_for_new_ticket(ticket_id)
+                state.repo = repo.name if repo is not None else None
+                self._check_repo(repo)
+            except (StageFailed, RepoSelectionError) as e:
                 trace.event("ticket_not_taken", reason=e.reason)
                 self._tickets.add_comment(ticket_id, "inbox", "orchestrator", "not_taken", e.reason)
                 raise TicketNotTakenError(e.reason) from e
+            self._states.save(state)  # выбор профиля не должен пропасть, если процесс убьют сейчас
             self._tickets.move(ticket_id, "inbox", "in-progress")
         else:
             state = self._states.load(ticket_id) or RunState(ticket_id=ticket_id)
@@ -229,6 +252,12 @@ class Orchestrator:
 
         # лимит на тикет считается по накопленному рабочему времени, простои между запусками
         # (убитый процесс, ночь) его не расходуют
+        try:
+            repo = self._repo_of_run(state)
+        except RepoSelectionError as e:  # профиль убрали из repos.yaml посреди работы над тикетом
+            trace.event("guardrail_blocked", guard="repo", reason=e.reason)
+            return e.reason
+        trace.event("repo_selected", repo=repo.name if repo is not None else None)
         deadline = self._guardrails.deadline(state.active_seconds)
         ctx = StageContext(
             ticket,
@@ -242,6 +271,7 @@ class Orchestrator:
                 ticket_id, "in-progress", agent, verdict, text
             ),
             self._masker.mask_text,
+            repo,
         )
         ctx.run_dir.mkdir(parents=True, exist_ok=True)
         for stage in self._stages:

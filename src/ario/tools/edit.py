@@ -26,7 +26,7 @@ class EditError(ValueError):
 
 @dataclass(frozen=True)
 class EditOutcome:
-    path: str  # относительно корня RX
+    path: str  # относительно корня репозитория
     first_line: int
     last_line: int
     snippet: str  # изменённый участок с номерами строк

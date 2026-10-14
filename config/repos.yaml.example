@@ -1,0 +1,21 @@
+# Профили репозиториев (необязательно). Скопируйте файл куда удобно и задайте путь в ARIO_REPOS
+# (само по себе наличие файла ничего не включает).
+# Без этого файла работает один профиль `rx`, собранный из RX_PATH, BASE_BRANCH, BRANCH_TEMPLATE
+# и ARIO_BUILD_COMMAND из .env.
+#
+# Выбор репозитория для тикета (один раз при старте, результат пишется в runs/<id>/state.json):
+#   1. `ario run <id> --repo <имя>`;
+#   2. совпадение с match: префикс area path или тег тикета;
+#   3. иначе default. Если подходят сразу два профиля, тикет не берётся в работу.
+default: rx
+repos:
+  rx:
+    path: D:\Projects\master\RX      # относительный путь считается от папки этого файла
+    base_branch: master
+    branch_template: antares/ai-{id}
+    build_command: ""                # пусто: dotnet build проекта
+    knowledge_dir: .                 # AGENTS.md, agents/, skills/ репозитория; от ARIO_PROJECT_DIR
+    write_deny_extra: []             # правила запрета записи сверх config/guardrails.yaml
+    match:
+      area_path: ['SmartInstruments\Antares']
+      tags: []

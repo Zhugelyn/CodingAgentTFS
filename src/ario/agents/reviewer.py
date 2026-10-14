@@ -19,6 +19,7 @@ from ario.agents.verdicts import (
 from ario.errors import StageFailed
 from ario.fsutil import atomic_write_text
 from ario.orchestrator import Stage, StageContext
+from ario.repos import NO_REPO
 from ario.tools.git import GitRepo, Runner
 from ario.tools.proc import ToolError, run_process
 
@@ -45,12 +46,12 @@ def make_reviewer_stage(
     name = "review" if attempt == 1 else f"review-{attempt}"
 
     def run(ctx: StageContext) -> None:
-        settings = ctx.settings
-        if settings.rx_path is None:
-            raise StageFailed("Не задан RX_PATH: reviewer не знает, где смотреть код")
-        rx = settings.rx_path
+        repo = ctx.repo
+        if repo is None:
+            raise StageFailed(f"{NO_REPO}: reviewer не знает, где смотреть код")
+        rx = repo.path
         try:
-            spec = load_agent_spec(settings.project_dir, ROLE)
+            spec = load_agent_spec(repo.knowledge_dir, ROLE)
         except SpecError as e:
             raise StageFailed(f"Ошибка конфигурации агента {ROLE}: {e}") from e
 
@@ -68,8 +69,8 @@ def make_reviewer_stage(
         git = GitRepo(
             rx,
             ctx.guardrails.config.env,
-            settings.base_branch,
-            settings.branch_template,
+            repo.base_branch,
+            repo.branch_template,
             runner=runner,
         )
         try:
@@ -85,7 +86,7 @@ def make_reviewer_stage(
         ctx.guardrails.scanner.check(diff, "diff изменений")  # InjectionDetected → needs-human
         ctx.guardrails.scanner.check(development_md, "отчёте developer")
 
-        guard = ctx.guardrails.path_guard(rx)
+        guard = ctx.guardrails.path_guard(rx, repo.write_deny_extra)
         request = AgentRequest(
             role=ROLE,
             root=rx,
