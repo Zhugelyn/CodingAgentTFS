@@ -5,6 +5,7 @@ from __future__ import annotations
 ANALYSIS = "analysis"
 DEVELOPMENT = "development"
 REVIEW = "review"
+PUBLISH = "publish"
 
 
 def development_stage(attempt: int) -> str:

@@ -19,3 +19,19 @@ repos:
     match:
       area_path: ['SmartInstruments\Antares']
       tags: []
+    # Push и PR оркестратором (необязательно; включается ещё и ARIO_PUBLISH=1). Токен берётся из
+    # переменной окружения pat_env (в этот файл токен не пишется), скоуп токена: Code (Read & write).
+    # Самому пользователю в репозитории нужны права Contribute, Create branch и Contribute to pull
+    # requests. Push без force, только ветки тикета.
+    # publish:
+    #   url: https://rxtfs.directum.ru/IS-Builder8   # коллекция git-сервера, без проекта
+    #   project: Sungero
+    #   repository: DirectumRX
+    #   target_branch: master                         # по умолчанию base_branch
+    #   pat_env: RX_GIT_PAT
+    #   remote: origin
+    #   draft: false
+    #   commit_template: "{id}: {title}"
+    #   pr_title_template: "{id}: {title}"
+    #   author_name: ArioCodingAgent                  # автор коммита; пусто: настройки git на ноде
+    #   author_email: ario@example.com

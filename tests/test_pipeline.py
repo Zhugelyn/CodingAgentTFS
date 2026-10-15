@@ -113,6 +113,7 @@ def test_approve_on_first_review_skips_rework(pipe_settings: Settings, repo: Pat
         "review": "done",
         "development-2": "skipped",
         "review-2": "skipped",
+        "publish": "skipped",  # публикация выключена (нет ARIO_PUBLISH и блока publish)
     }
     assert [r.role for r in backend.requests] == ["analyst", "developer", "reviewer"]
     review_task = backend.requests[2].task
@@ -145,6 +146,7 @@ def test_reject_then_rework_then_approve(pipe_settings: Settings, repo: Path) ->
         "review": "done",
         "development-2": "done",
         "review-2": "done",
+        "publish": "skipped",
     }
     rework_task = backend.requests[3].task
     assert "<review>" in rework_task

@@ -10,9 +10,11 @@ states:
   analysis_started: {to: Analysis, from: [New]}            # старт analyst
   analysis_done: {to: ReadyForDev, from: [Analysis]}       # analyst закончил
   development_started: {to: Development, from: [ReadyForDev, ToDo]}  # старт developer
-  # Включайте review_approved только вместе с push и PR (S17): иначе тикет уйдёт тестировщикам,
-  # а изменения лежат только в локальной ветке.
-  # review_approved: {to: ReadyForTesting, from: [Development]}      # reviewer одобрил
+  # PR открыт (этап publish, нужны ARIO_PUBLISH=1 и блок publish в профиле репозитория):
+  pr_created: {to: ReadyForTesting, from: [Development]}
+  # review_approved (reviewer одобрил) ставит состояние раньше push и PR: нужен только если
+  # публикации нет, иначе тикет уйдёт тестировщикам, пока изменения лежат в локальной ветке.
+  # review_approved: {to: ReadyForTesting, from: [Development]}
 
 # Комментарии: «нужен человек» (с отметкой автора тикета) и «готово» (итог работы).
 comments:

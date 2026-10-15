@@ -39,3 +39,4 @@ dist/
 # Данные локального Phoenix (графики прогонов)
 /.phoenix/
 /config/repos.yaml
+/config/ticket-flow.yaml

@@ -31,6 +31,23 @@ class RepoSelectionError(Exception):
 
 
 @dataclass(frozen=True)
+class PublishConfig:
+    """Куда оркестратор отправляет ветку тикета и где открывает PR (S17)."""
+
+    url: str  # адрес коллекции git-сервера, без проекта (например, https://host/Collection)
+    project: str
+    repository: str
+    target_branch: str  # в какую ветку открывается PR
+    pat_env: str = "GIT_PAT"  # имя переменной окружения с токеном (сам токен в профиле не хранится)
+    remote: str = "origin"
+    draft: bool = False
+    commit_template: str = "{id}: {title}"
+    pr_title_template: str = "{id}: {title}"
+    author_name: str | None = None  # автор коммита; пусто: настройки git на ноде
+    author_email: str | None = None
+
+
+@dataclass(frozen=True)
 class RepoProfile:
     name: str
     path: Path
@@ -41,12 +58,35 @@ class RepoProfile:
     write_deny_extra: tuple[str, ...] = ()  # правила запрета записи сверх общих (guardrails)
     area_paths: tuple[str, ...] = ()  # префиксы area path, по которым выбирается профиль
     tags: tuple[str, ...] = ()  # теги тикета, по которым выбирается профиль
+    publish: PublishConfig | None = None  # push и PR; без блока ветка остаётся локальной
 
 
 class _Match(BaseModel):
     model_config = ConfigDict(extra="forbid")
     area_path: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+
+
+class _Publish(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: str = Field(min_length=1)
+    project: str = Field(min_length=1)
+    repository: str = Field(min_length=1)
+    target_branch: str | None = None  # по умолчанию base_branch репозитория
+    pat_env: str = Field(default="GIT_PAT", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    remote: str = Field(default="origin", pattern=r"^[\w][\w.-]*$")
+    draft: bool = False
+    commit_template: str = "{id}: {title}"
+    pr_title_template: str = "{id}: {title}"
+    author_name: str | None = None
+    author_email: str | None = None
+
+    @field_validator("url")
+    @classmethod
+    def _https(cls, value: str) -> str:
+        if not value.startswith(("https://", "http://")):
+            raise ValueError("адрес git-сервера должен начинаться с https://")
+        return value.rstrip("/")
 
 
 class _Repo(BaseModel):
@@ -58,6 +98,7 @@ class _Repo(BaseModel):
     knowledge_dir: str = "."
     write_deny_extra: list[str] = Field(default_factory=list)
     match: _Match = Field(default_factory=_Match)
+    publish: _Publish | None = None
 
     @field_validator("path")
     @classmethod
@@ -71,6 +112,29 @@ class _ReposFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     default: str | None = None
     repos: dict[str, _Repo] = Field(min_length=1)  # без репозиториев работа не имеет смысла
+
+
+def _publish(name: str, raw: _Publish | None, base_branch: str) -> PublishConfig | None:
+    if raw is None:
+        return None
+    for field_name in ("commit_template", "pr_title_template"):
+        try:  # шаблон проверяется сразу, а не на первом тикете
+            getattr(raw, field_name).format(id="1", title="t")
+        except (KeyError, IndexError, ValueError) as e:
+            raise ConfigError(f"repos.yaml, репозиторий {name}: publish.{field_name}: {e}") from e
+    return PublishConfig(
+        url=raw.url,
+        project=raw.project,
+        repository=raw.repository,
+        target_branch=raw.target_branch or base_branch,
+        pat_env=raw.pat_env,
+        remote=raw.remote,
+        draft=raw.draft,
+        commit_template=raw.commit_template,
+        pr_title_template=raw.pr_title_template,
+        author_name=raw.author_name,
+        author_email=raw.author_email,
+    )
 
 
 def _profile(name: str, raw: _Repo, base: Path, project_dir: Path) -> RepoProfile:
@@ -88,6 +152,7 @@ def _profile(name: str, raw: _Repo, base: Path, project_dir: Path) -> RepoProfil
         write_deny_extra=tuple(raw.write_deny_extra),
         area_paths=tuple(raw.match.area_path),
         tags=tuple(raw.match.tags),
+        publish=_publish(name, raw.publish, raw.base_branch),
     )
 
 

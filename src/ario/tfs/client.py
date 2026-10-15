@@ -13,7 +13,7 @@ import json
 import math
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 import httpx
@@ -57,13 +57,21 @@ def _snippet(body: bytes) -> str:
     return f": {text}" if text else ""
 
 
+Kind = Literal["board", "git"]
+
+
 class TfsClient:
+    """Клиент одного сервера. `kind` закрепляет его роль: сервер доски (work items) или сервер
+    кода (pull request). Номер тикета с доски на сервере кода означает совсем другой элемент,
+    поэтому методы чужой роли не выполняются, а не отправляются на не тот сервер."""
+
     def __init__(
         self,
         base_url: str,
         project: str,
         pat: str,
         *,
+        kind: Kind = "board",
         transport: httpx.BaseTransport | None = None,
         timeout: float = DEFAULT_TIMEOUT,
         retry_wait: tuple[float, ...] = DEFAULT_RETRY_WAIT,
@@ -73,6 +81,7 @@ class TfsClient:
             raise ValueError("TFS_URL должен начинаться с https:// (или http://)")
         if not pat:
             raise ValueError("Не задан TFS_PAT")
+        self._kind = kind
         self._project = quote(project, safe="")
         self._retry_wait = retry_wait
         self._sleep = sleep
@@ -86,7 +95,13 @@ class TfsClient:
         )
 
     def __repr__(self) -> str:
-        return f"TfsClient({self._http.base_url!s})"
+        return f"TfsClient({self._kind}, {self._http.base_url!s})"
+
+    def _require(self, kind: Kind, action: str) -> None:
+        if self._kind != kind:
+            raise TfsError(
+                f"{action}: клиент сервера «{self._kind}», а действие относится к серверу «{kind}»"
+            )
 
     def close(self) -> None:
         self._http.close()
@@ -100,6 +115,7 @@ class TfsClient:
     # --- публичные методы ---------------------------------------------------------------------
     def wiql(self, query: str, top: int) -> list[int]:
         """Выполняет запрос WIQL и возвращает id work items в порядке запроса (не больше `top`)."""
+        self._require("board", "запрос WIQL")
         data = self._request(
             "POST",
             f"{self._project}/_apis/wit/wiql",
@@ -118,6 +134,7 @@ class TfsClient:
         return ids[:top]
 
     def work_item(self, item_id: int) -> dict[str, Any]:
+        self._require("board", "чтение work item")
         return self._request(
             "GET",
             f"{self._project}/_apis/wit/workitems/{int(item_id)}",
@@ -126,6 +143,7 @@ class TfsClient:
 
     def comments(self, item_id: int) -> list[dict[str, Any]]:
         """Комментарии work item в порядке TFS (новые первыми), с постраничным чтением."""
+        self._require("board", "чтение комментариев")
         result: list[dict[str, Any]] = []
         token: str | None = None
         for _ in range(MAX_COMMENT_PAGES):
@@ -150,6 +168,7 @@ class TfsClient:
 
     def work_item_brief(self, item_id: int) -> dict[str, Any]:
         """Только нужные для записи поля (состояние, тип, автор) и ревизия `rev`."""
+        self._require("board", "чтение work item")
         return self._request(
             "GET",
             f"{self._project}/_apis/wit/workitems/{int(item_id)}",
@@ -158,6 +177,7 @@ class TfsClient:
 
     def type_states(self, item_type: str) -> list[str]:
         """Имена состояний типа work item (для проверки карты «этап → состояние»)."""
+        self._require("board", "чтение состояний")
         data = self._request(
             "GET",
             f"{self._project}/_apis/wit/workitemtypes/{quote(item_type, safe='')}/states",
@@ -170,6 +190,7 @@ class TfsClient:
 
     def add_comment(self, item_id: int, html: str) -> int:
         """Добавляет комментарий (HTML) и возвращает его id. Не повторяется при обрыве."""
+        self._require("board", "комментарий к work item")
         data = self._request(
             "POST",
             f"{self._project}/_apis/wit/workItems/{int(item_id)}/comments",
@@ -184,6 +205,7 @@ class TfsClient:
 
     def set_state(self, item_id: int, state: str, rev: int) -> None:
         """Меняет состояние при условии, что ревизия тикета всё ещё `rev` (иначе конфликт)."""
+        self._require("board", "смена состояния work item")
         patch = [
             {"op": "test", "path": "/rev", "value": int(rev)},
             {"op": "add", "path": "/fields/System.State", "value": state},
@@ -197,6 +219,52 @@ class TfsClient:
             idempotent=False,
             conflict=True,
         )
+
+    # --- git: pull request (S17) --------------------------------------------------------------
+    def find_pull_request(self, repository: str, source: str, target: str) -> dict[str, Any] | None:
+        """Активный PR из ветки `source` в `target` (его повторно не создаём), если он есть."""
+        self._require("git", "поиск pull request")
+        data = self._request(
+            "GET",
+            f"{self._project}/_apis/git/repositories/{quote(repository, safe='')}/pullrequests",
+            {
+                "searchCriteria.sourceRefName": f"refs/heads/{source}",
+                "searchCriteria.targetRefName": f"refs/heads/{target}",
+                "searchCriteria.status": "active",
+                "api-version": API_VERSION,
+            },
+        )
+        found = data.get("value")
+        if not isinstance(found, list):
+            raise TfsError("Ответ поиска PR без списка value")
+        return next((pr for pr in found if isinstance(pr, dict)), None)
+
+    def create_pull_request(
+        self,
+        repository: str,
+        source: str,
+        target: str,
+        title: str,
+        description: str,
+        *,
+        draft: bool = False,
+    ) -> dict[str, Any]:
+        """Открывает PR. Не повторяется при обрыве: дубль PR хуже ошибки."""
+        self._require("git", "создание pull request")
+        data = self._request(
+            "POST",
+            f"{self._project}/_apis/git/repositories/{quote(repository, safe='')}/pullrequests",
+            {"api-version": API_VERSION},
+            payload={
+                "sourceRefName": f"refs/heads/{source}",
+                "targetRefName": f"refs/heads/{target}",
+                "title": title,
+                "description": description,
+                "isDraft": draft,
+            },
+            idempotent=False,
+        )
+        return data
 
     # --- транспорт ----------------------------------------------------------------------------
     def _request(

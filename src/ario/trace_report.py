@@ -151,6 +151,9 @@ def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
             st.notes.append(f"сработала защита: {_short(data.get('reason'))}")
         elif kind == "ticket_system":
             st.notes.append(f"доска: {_board_line(data)}")
+        elif kind == "published":
+            how = "PR уже был" if data.get("pr_reused") else "PR открыт"
+            st.notes.append(f"ветка {data.get('branch')} отправлена, {how}: {data.get('pr_url')}")
         elif kind == "build_output":
             ok = "успешна" if data.get("ok") else f"не удалась, ошибок: {data.get('errors')}"
             st.notes.append(f"сборка {ok}")
@@ -283,6 +286,8 @@ def render_steps(events: list[Event], stage: str | None = None, *, full: bool = 
             lines.append(f"{clock} [{where}] ЗАЩИТА: {_short(data.get('reason'), 200)}")
         elif kind == "ticket_system":
             lines.append(f"{clock} [{where}] доска: {_board_line(data)}")
+        elif kind == "published":
+            lines.append(f"{clock} [{where}] push и PR: {data.get('pr_url')}")
         elif kind == "observer_failed":
             lines.append(
                 f"{clock} [{where}] сбой отчёта на доске: {_short(data.get('reason'), 200)}"

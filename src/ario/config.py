@@ -106,6 +106,7 @@ class Settings:
     tfs_pat: str | None = field(default=None, repr=False)  # секрет: не попадает в repr
     # запись на доску (S16): выключена, пока не задан TFS_WRITE; токен записи можно держать
     # отдельно от токена чтения (TFS_WRITE_PAT), иначе пишет TFS_PAT
+    publish: bool = False  # push и PR (S17): выключено, пока не задан ARIO_PUBLISH=1
     tfs_write: bool = False
     tfs_write_pat: str | None = field(default=None, repr=False)
     ticket_flow_path: Path | None = (
@@ -153,6 +154,7 @@ class Settings:
             tfs_project=(os.environ.get("TFS_PROJECT") or "").strip() or None,
             tfs_pat=(os.environ.get("TFS_PAT") or "").strip() or None,
             tfs_wiql=(os.environ.get("TFS_WIQL") or "").strip() or None,
+            publish=_flag(os.environ.get("ARIO_PUBLISH")),
             tfs_write=_flag(os.environ.get("TFS_WRITE")),
             tfs_write_pat=(os.environ.get("TFS_WRITE_PAT") or "").strip() or None,
             ticket_flow_path=_optional_path(os.environ.get("ARIO_TICKET_FLOW")),

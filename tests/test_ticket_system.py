@@ -567,5 +567,25 @@ def test_stage_names_of_the_pipeline_match_the_names_the_reporter_listens_to() -
             raise AssertionError
 
     names = [s.name for s in build_pipeline(Unused())]
-    assert names == ["analysis", "development", "review", "development-2", "review-2"]
+    assert names == ["analysis", "development", "review", "development-2", "review-2", "publish"]
     assert set(STAGE_STARTED) | set(STAGE_FINISHED) | set(REVIEWS) <= set(names)
+
+
+# --- публикация (S17) ---------------------------------------------------------------------------
+def test_pr_created_moves_the_ticket_and_the_final_comment_has_the_pr_link(
+    settings: Settings, tmp_path: Path
+) -> None:
+    def publish(ctx: StageContext) -> None:
+        (ctx.run_dir / "publish.json").write_text(
+            json.dumps({"pr_id": 7, "pr_url": "https://git.example.test/pr/7"}), encoding="utf-8"
+        )
+
+    tfs_ticket(settings)
+    recorder = Recorder()
+    flow = FLOW.replace(
+        "comments:", "  pr_created: {to: ReadyForTesting, from: [Development]}\ncomments:"
+    )
+    assert run_flow(settings, tmp_path, [Stage("publish", publish)], recorder, flow) == "done"
+    assert [c[2] for c in recorder.calls if c[0] == "state"] == ["ReadyForTesting"]
+    (comment,) = [c for c in recorder.calls if c[0] == "comment"]
+    assert "PR: https://git.example.test/pr/7" in comment[3]

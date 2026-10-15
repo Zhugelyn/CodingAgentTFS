@@ -18,13 +18,14 @@ from ario.agents.verdicts import VerdictError, load_analysis, read_review_verdic
 from ario.branches import branch_name
 from ario.config import ConfigError, Settings
 from ario.orchestrator import StageContext
-from ario.stage_names import ANALYSIS, DEVELOPMENT, review_stage
+from ario.publish import read_publication
+from ario.stage_names import ANALYSIS, DEVELOPMENT, PUBLISH, review_stage
 from ario.tfs.client import BOARD_TIMEOUT, TfsClient
 from ario.ticket_system import NullTicketSystem, TfsTicketSystem, TicketSystem, WriteResult
 
 MAX_PLAN_STEPS = 5
 STAGE_STARTED = {ANALYSIS: "analysis_started", DEVELOPMENT: "development_started"}
-STAGE_FINISHED = {ANALYSIS: "analysis_done"}
+STAGE_FINISHED = {ANALYSIS: "analysis_done", PUBLISH: "pr_created"}
 REVIEWS = {review_stage(1): 1, review_stage(2): 2}
 
 
@@ -40,6 +41,7 @@ class _States(BaseModel):
     analysis_done: _Transition | None = None
     development_started: _Transition | None = None
     review_approved: _Transition | None = None
+    pr_created: _Transition | None = None  # после push и открытия PR (S17)
 
 
 class _Comments(BaseModel):
@@ -134,11 +136,11 @@ def _trace(
 
 def _done_text(ctx: StageContext) -> str:
     lines = ["Агент завершил работу над тикетом."]
+    publication = read_publication(ctx.run_dir)
     if ctx.repo is not None:
         branch = branch_name(ctx.ticket.id, ctx.repo.branch_template, ctx.ticket.type)
-        lines.append(
-            f"Репозиторий: {ctx.repo.name}, ветка: {branch} (создана локально, push и PR вручную)."
-        )
+        where = "отправлена, открыт PR" if publication else "создана локально, push и PR вручную"
+        lines.append(f"Репозиторий: {ctx.repo.name}, ветка: {branch} ({where}).")
     try:
         plan = load_analysis(ctx.run_dir / "analysis.json").plan
     except (OSError, VerdictError):
@@ -146,6 +148,8 @@ def _done_text(ctx: StageContext) -> str:
     if plan:
         lines.append("План, по которому велась работа:")
         lines += [f"- {step.step}" for step in plan[:MAX_PLAN_STEPS]]
+    if publication and publication.get("pr_url"):
+        lines.append(f"PR: {publication['pr_url']}")
     verdicts = [v for n in (1, 2) if (v := _verdict(ctx, n))]
     if verdicts:
         lines.append(f"Ревью: {' → '.join(verdicts)}.")
