@@ -138,6 +138,7 @@ uv run ario resume 43702
 
 | Тема | Файл |
 |---|---|
+| Карта проекта: где что лежит | [docs/STRUCTURE.md](docs/STRUCTURE.md) |
 | Все переменные `.env`, модели по ролям, несколько репозиториев, запись на доску, настройка агентов | [docs/guide/configuration.md](docs/guide/configuration.md) |
 | Токены, кэш, цена, как читать `ario trace` | [docs/guide/metrics.md](docs/guide/metrics.md) |
 | Графики в Phoenix, тексты запросов к модели | [docs/guide/phoenix.md](docs/guide/phoenix.md) |
