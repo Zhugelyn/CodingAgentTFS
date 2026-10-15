@@ -98,6 +98,7 @@ def make_reviewer_stage(
             trace=ctx.trace,
             stage=name,
             model_retries=ctx.guardrails.config.limits.model_retries,
+            call_timeout=ctx.guardrails.config.limits.model_call_timeout_seconds,
             validate_final=_validate,
         )
         result = backend.run(request)

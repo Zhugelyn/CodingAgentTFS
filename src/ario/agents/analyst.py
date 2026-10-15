@@ -19,8 +19,10 @@ from ario.errors import GuardViolation, StageFailed
 from ario.fsutil import atomic_write_text
 from ario.guardrails import PathGuard
 from ario.orchestrator import Stage, StageContext
-from ario.repos import NO_REPO
+from ario.repos import NO_REPO, RepoProfile
 from ario.stage_names import ANALYSIS
+from ario.tools.git import GitRepo, Runner
+from ario.tools.proc import ToolError, run_process
 
 ROLE = "analyst"
 STAGE_NAME = ANALYSIS
@@ -49,7 +51,25 @@ def _make_validator(guard: PathGuard) -> Callable[[str], None]:
     return validate
 
 
-def make_analyst_stage(backend: AgentBackend) -> Stage:
+def _checkout_base(ctx: StageContext, repo: RepoProfile, runner: Runner) -> None:
+    """Analyst читает рабочую копию, а developer потом ветвится от базовой ветки: если в клоне
+    выбрана другая ветка, план строился бы по чужому коду и developer не нашёл бы его в базе."""
+    git = GitRepo(
+        repo.path, ctx.guardrails.config.env, repo.base_branch, repo.branch_template, runner=runner
+    )
+    if not git.is_repository():
+        return
+    try:
+        previous = git.ensure_base_checked_out(ctx.ticket.id, ctx.ticket.type)
+    except ToolError as e:
+        raise StageFailed(f"Не удалось подготовить ветку для анализа: {e}") from e
+    if previous is not None:
+        ctx.trace.event(
+            "branch_switched", stage=ANALYSIS, to=repo.base_branch, **{"from": previous}
+        )
+
+
+def make_analyst_stage(backend: AgentBackend, runner: Runner = run_process) -> Stage:
     def run(ctx: StageContext) -> None:
         repo = ctx.repo
         if repo is None:
@@ -59,6 +79,7 @@ def make_analyst_stage(backend: AgentBackend) -> Stage:
         except SpecError as e:
             raise StageFailed(f"Ошибка конфигурации агента {ROLE}: {e}") from e
 
+        _checkout_base(ctx, repo, runner)
         guard = ctx.guardrails.path_guard(repo.path, repo.write_deny_extra)
         validate = _make_validator(guard)
         request = AgentRequest(
@@ -76,6 +97,7 @@ def make_analyst_stage(backend: AgentBackend) -> Stage:
             trace=ctx.trace,
             stage=STAGE_NAME,
             model_retries=ctx.guardrails.config.limits.model_retries,
+            call_timeout=ctx.guardrails.config.limits.model_call_timeout_seconds,
             validate_final=validate,
         )
         result = backend.run(request)

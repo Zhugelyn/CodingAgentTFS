@@ -17,6 +17,8 @@ class LimitsConfig(_Strict):
     max_context_tokens: int = Field(gt=0)
     ticket_timeout_seconds: int = Field(gt=0)
     model_retries: int = Field(ge=1)
+    # жёсткий предел одного запроса к модели; зависший запрос иначе держал бы прогон бесконечно
+    model_call_timeout_seconds: int = Field(default=420, gt=0)
 
 
 class PatternRule(_Strict):

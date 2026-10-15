@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from ario.agents.verdicts import VerdictError
 from ario.errors import InjectionDetected, LimitExceeded, StageFailed, StepLimitReached
 from ario.guardrails import Deadline, InjectionScanner, TokenBudget
+from ario.llm_guard import DEFAULT_CALL_TIMEOUT, hard_call_limit
 from ario.llm_telemetry import llm_context
 from ario.trace import TraceWriter
 
@@ -45,6 +46,7 @@ class AgentRequest:
     trace: TraceWriter
     stage: str
     model_retries: int = 3
+    call_timeout: float = DEFAULT_CALL_TIMEOUT  # жёсткий предел одного запроса к модели, с
     # проверяет итоговый ответ; бросает VerdictError, тогда агенту даётся один повтор
     validate_final: Callable[[str], None] | None = None
 
@@ -295,7 +297,10 @@ class OpenHandsBackend:
             final.clear()
             conversation.send_message(message)
             try:
-                with llm_context(request.trace.ticket_id, stage, role):
+                with (
+                    llm_context(request.trace.ticket_id, stage, role),
+                    hard_call_limit(request.call_timeout, request.deadline),
+                ):
                     conversation.run()
             except ConversationRunError as e:
                 if stop:
@@ -383,6 +388,8 @@ def classify_run_error(error: BaseException, role: str, retries: int) -> StageFa
     )
 
     for cause in _causes(error):
+        if isinstance(cause, LimitExceeded):  # своё ограничение (время тикета), не сбой модели
+            return cause
         status = getattr(cause, "status_code", None)
         if isinstance(cause, LLMAuthenticationError) or status in (401, 403):
             return StageFailed(

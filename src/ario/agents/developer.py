@@ -78,6 +78,9 @@ def _prepare_branch(
                 f"Для доработки ожидалась ветка {name}, сейчас {current or 'detached HEAD'}"
             )
         git.ensure_clean()  # между analyst и developer дерево могли испортить
+        if git.reuse_empty_ticket_branch(ticket.id, ticket.type):  # осталась от прошлого запуска
+            trace.event("branch_reused", stage=stage, agent=ROLE, branch=name, was_empty=True)
+            return name
         created = git.create_ticket_branch(ticket.id, ticket.type)
     except ToolError as e:
         raise StageFailed(f"Git: {e}") from e
@@ -157,6 +160,7 @@ def make_developer_stage(
             trace=ctx.trace,
             stage=name,
             model_retries=ctx.guardrails.config.limits.model_retries,
+            call_timeout=ctx.guardrails.config.limits.model_call_timeout_seconds,
         )
         result = backend.run(request)
         report = _make_report(branch, attempt, toolset, git, result)

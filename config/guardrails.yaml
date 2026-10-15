@@ -11,6 +11,7 @@ limits:
   max_context_tokens: 128000
   ticket_timeout_seconds: 1800 # 30 минут на тикет
   model_retries: 3             # попыток при 429/5xx
+  model_call_timeout_seconds: 420  # жёсткий предел одного запроса к модели (зависание держало бы прогон)
 
 injection:
   # Проверяются текст тикета на входе, а также файлы и вывод инструментов в процессе.

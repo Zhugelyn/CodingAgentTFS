@@ -269,11 +269,26 @@ def test_dirty_tree_before_branch_is_not_taken_over(dev_settings: Settings, repo
     assert git(repo, "branch", "--show-current").strip() == "master"  # ветка не создавалась
 
 
-def test_existing_branch_is_not_overwritten(dev_settings: Settings, repo: Path) -> None:
+def test_existing_branch_with_commits_is_not_overwritten(
+    dev_settings: Settings, repo: Path
+) -> None:
     prepare_run(dev_settings)
-    git(repo, "branch", "ai/43031")
+    git(repo, "switch", "-c", "ai/43031")
+    (repo / "src" / "Mod" / "Own.cs").write_text("class Own {}\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "чужая работа")
+    git(repo, "switch", "master")
     assert run_stage(dev_settings, ScriptedBackend(good_script), FakeDotnet()) == "needs-human"
     assert "уже существует" in state_reason(dev_settings)
+
+
+def test_empty_branch_left_by_a_previous_run_is_reused(dev_settings: Settings, repo: Path) -> None:
+    prepare_run(dev_settings)
+    git(repo, "branch", "ai/43031")  # создана прошлым запуском и совпадает с master
+    assert run_stage(dev_settings, ScriptedBackend(good_script), FakeDotnet()) == "done"
+    assert git(repo, "branch", "--show-current").strip() == "ai/43031"
+    trace = (dev_settings.traces_dir / "43031" / "events.jsonl").read_text(encoding="utf-8")
+    assert '"was_empty": true' in trace and "branch_created" not in trace
 
 
 def test_resume_reuses_current_ticket_branch_with_partial_work(

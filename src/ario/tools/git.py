@@ -127,11 +127,45 @@ class GitRepo:
         self._git("switch", "--create", name, self._base)
         return name
 
+    def reuse_empty_ticket_branch(self, ticket_id: str, ticket_type: str | None = None) -> bool:
+        """Ветка тикета осталась от прошлого неудачного запуска и совпадает с базовой: в ней нет
+        ничего, что можно потерять, поэтому переключаемся на неё. Ветку с коммитами не трогаем."""
+        name = self.branch_for(ticket_id, ticket_type)
+        if not (self.branch_exists(name) and self.branch_exists(self._base)):
+            return False
+        same = self._git("rev-parse", f"refs/heads/{name}") == self._git(
+            "rev-parse", f"refs/heads/{self._base}"
+        )
+        if same:
+            self._git("switch", name)
+        return same
+
     def ensure_on_ticket_branch(self, ticket_id: str, ticket_type: str | None = None) -> None:
         expected = self.branch_for(ticket_id, ticket_type)
         actual = self.current_branch()
         if actual != expected:
             raise ToolError(f"Ожидалась ветка {expected}, сейчас {actual or 'detached HEAD'}")
+
+    def is_repository(self) -> bool:
+        result = self._runner(
+            ["git", "rev-parse", "--is-inside-work-tree"], self._root, self._timeout, self._env
+        )
+        return result.returncode == 0
+
+    def ensure_base_checked_out(self, ticket_id: str, ticket_type: str | None = None) -> str | None:
+        """Анализ должен видеть код базовой ветки, а не той, что выбрана в клоне случайно.
+
+        Базовая ветка и ветка тикета остаются как есть; с любой другой ветки (дерево обязано быть
+        чистым) переключаемся на базовую. Возвращает ветку, с которой переключились, или `None`.
+        """
+        current = self.current_branch()
+        if current in (self._base, self.branch_for(ticket_id, ticket_type)):
+            return None
+        self.ensure_clean()
+        if not self.branch_exists(self._base):
+            raise ToolError(f"Базовая ветка {self._base} не найдена")
+        self._git("switch", self._base)
+        return current or "detached HEAD"
 
     # --- чтение для агентов ---
     def status(self) -> str:
