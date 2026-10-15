@@ -9,7 +9,7 @@
 - `uv run mypy` — типы (strict)
 - `uv run ario fetch [--id N] [--dry-run]` — забрать тикеты из TFS в `tickets/inbox/`
 - `uv run ario run <id> [--repo ИМЯ]` — провести тикет из `inbox/` по потоку (повтор после падения продолжает с последнего готового этапа)
-- `uv run ario watch [--once] [--dry-run]` — автоматически: опрос TFS и очередь (`--dry-run` ничего не запускает)
+- `uv run ario watch [--once] [--dry-run] [--webhook]` — автоматически: опрос TFS и очередь (`--dry-run` ничего не запускает), `--webhook` принимает вебхуки TFS
 - `uv run ario rework <id> [--from-pr] [--note ТЕКСТ] [--file ФАЙЛ]` — доработка завершённого тикета по замечаниям к PR (до трёх раундов)
 - `uv run ario resume <id>` — возобновить тикет из `needs-human/` с упавшего этапа (после починки причины)
 - `uv run ario trace <id> [--steps] [--stage ЭТАП] [--full]` — разбор трассы: сводка по этапам или пошаговая лента

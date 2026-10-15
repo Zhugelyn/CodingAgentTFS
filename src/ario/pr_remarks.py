@@ -20,6 +20,20 @@ OPEN_STATUSES = frozenset({"active", "pending"})
 MAX_COMMENT_CHARS = 2000
 
 
+def find_ticket_by_pr(runs_dir: Path, pr_id: int) -> str | None:
+    """Тикет, для которого открыт PR `pr_id` (по `runs/<id>/publish.json`); `None`, если чужой."""
+    if not runs_dir.is_dir():
+        return None
+    for path in sorted(runs_dir.glob("*/publish.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("pr_id") == pr_id:
+            return path.parent.name
+    return None
+
+
 def load_handled(run_dir: Path) -> dict[str, int]:
     try:
         data = json.loads((run_dir / HANDLED_FILE).read_text(encoding="utf-8"))

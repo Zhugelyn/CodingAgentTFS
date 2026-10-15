@@ -28,6 +28,8 @@ def _branch_template(raw: str | None) -> str:
 
 DEFAULT_TFS_MAX_ITEMS = 5
 DEFAULT_POLL_MINUTES = 5
+DEFAULT_WEBHOOK_PORT = 8765
+DEFAULT_WEBHOOK_HOST = "127.0.0.1"
 
 
 def _flag(raw: str | None) -> bool:
@@ -77,6 +79,13 @@ def _positive_int(name: str, raw: str | None, default: int) -> int:
     return value
 
 
+def _port(name: str, raw: str | None, default: int) -> int:
+    value = _positive_int(name, raw, default)
+    if value > 65535:
+        raise ConfigError(f"{name}: порт должен быть от 1 до 65535, получено {value}")
+    return value
+
+
 def _optional_path(raw: str | None) -> Path | None:
     """Путь к необязательному файлу настроек только явный: файл рядом не подхватывается сам."""
     return Path(raw.strip()).resolve() if raw and raw.strip() else None
@@ -115,6 +124,9 @@ class Settings:
     )
     tfs_wiql: str | None = None  # пусто: запрос по умолчанию (ario.tfs.fetch.default_wiql)
     poll_minutes: int = DEFAULT_POLL_MINUTES  # как часто `ario watch` опрашивает TFS
+    webhook_host: str = DEFAULT_WEBHOOK_HOST  # `ario watch --webhook`: где слушать
+    webhook_port: int = DEFAULT_WEBHOOK_PORT
+    webhook_secret: str | None = field(default=None, repr=False)  # пароль Basic-авторизации
     tfs_max_items: int = DEFAULT_TFS_MAX_ITEMS  # сколько новых тикетов берёт один `ario fetch`
     otlp_llm_content: bool = False  # живая выгрузка текста запросов к модели (только локально)
     allow_remote_llm_content: bool = False  # осознанный обход ограничения «только localhost»
@@ -168,6 +180,14 @@ class Settings:
                 os.environ.get("ARIO_POLL_MINUTES"),
                 DEFAULT_POLL_MINUTES,
             ),
+            webhook_host=(os.environ.get("ARIO_WEBHOOK_HOST") or "").strip()
+            or DEFAULT_WEBHOOK_HOST,
+            webhook_port=_port(
+                "ARIO_WEBHOOK_PORT",
+                os.environ.get("ARIO_WEBHOOK_PORT"),
+                DEFAULT_WEBHOOK_PORT,
+            ),
+            webhook_secret=(os.environ.get("ARIO_WEBHOOK_SECRET") or "").strip() or None,
             tfs_max_items=_positive_int(
                 "TFS_MAX_ITEMS", os.environ.get("TFS_MAX_ITEMS"), DEFAULT_TFS_MAX_ITEMS
             ),

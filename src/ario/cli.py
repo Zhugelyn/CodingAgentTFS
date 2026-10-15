@@ -25,6 +25,7 @@ from ario.pipeline import build_pipeline
 from ario.reporting import build_reporter, write_config_problem
 from ario.store import InvalidTicketIdError, TicketNotFoundError, TicketStore
 from ario.trace import Masker
+from ario.webhook import DEFAULT_PATH
 
 if TYPE_CHECKING:
     from ario.tfs.fetch import FetchReport
@@ -44,6 +45,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "watch", help="автоматически забирать тикеты из TFS и вести их по потоку (очередь inbox/)"
     )
     watch.add_argument("--once", action="store_true", help="один цикл (опрос и очередь) и выход")
+    watch.add_argument(
+        "--webhook",
+        action="store_true",
+        help="принимать вебхуки TFS (нужен ARIO_WEBHOOK_SECRET); опрос остаётся запасным путём",
+    )
     watch.add_argument(
         "--dry-run",
         action="store_true",
@@ -295,12 +301,73 @@ def _build_orchestrator(
     return orchestrator, masker
 
 
+def _gather_pr_remarks(settings: Settings, ticket_id: str) -> tuple[str, dict[str, int]]:
+    """Новые замечания из обсуждения PR тикета и обновление журнала учтённых комментариев.
+
+    Исключения: `ValueError` (нет PR, нет блока publish, нет токена), `TfsError`, `ConfigError`,
+    `RepoSelectionError`. Пустой текст: новых замечаний нет.
+    """
+    from ario.pr_remarks import collect_remarks, load_handled
+    from ario.publish import AGENT_REPLY_MARK, default_client, read_publication
+    from ario.repos import RepoRegistry
+    from ario.state import StateStore
+
+    run_dir = settings.runs_dir / ticket_id
+    state = StateStore(settings.runs_dir).load(ticket_id)
+    publication = read_publication(run_dir)
+    if state is None or not publication or not publication.get("pr_id"):
+        raise ValueError("у тикета нет PR (runs/<id>/publish.json): сначала публикация")
+    registry = RepoRegistry.from_settings(settings)
+    profile = registry.get(state.repo) if state.repo else registry.default
+    config = profile.publish if profile is not None else None
+    if config is None:
+        raise ValueError("в профиле репозитория нет блока publish")
+    token = os.environ.get(config.pat_env, "").strip()
+    if not token:
+        raise ValueError(f"не задан токен {config.pat_env}")
+    _use_system_certificates()
+    pr_id = int(publication["pr_id"])
+    with default_client(config, token) as client:
+        threads = client.pull_request_threads(config.repository, pr_id)
+    return collect_remarks(threads, pr_id, load_handled(run_dir), agent_mark=AGENT_REPLY_MARK)
+
+
+def _rework_for_pr(
+    settings: Settings, store: TicketStore, orchestrator: Orchestrator, pr_id: int
+) -> str | None:
+    """Доработка по сигналу вебхука: только для нашего PR и тикета в `done/`, и только если в
+    обсуждении есть новые замечания. `None`: делать нечего."""
+    from ario.pr_remarks import find_ticket_by_pr, save_handled
+
+    ticket_id = find_ticket_by_pr(settings.runs_dir, pr_id)
+    if ticket_id is None:
+        print(f"PR {pr_id} не относится к нашим тикетам, пропущено", flush=True)
+        return None
+    if store.locate(ticket_id) != "done":
+        print(f"Тикет {ticket_id} не в done/, доработка по PR {pr_id} пропущена", flush=True)
+        return None
+    text, handled = _gather_pr_remarks(settings, ticket_id)
+    if not text:
+        print(f"PR {pr_id}: новых замечаний нет", flush=True)
+        return None
+    run_dir = settings.runs_dir / ticket_id
+    outcome = orchestrator.rework(
+        ticket_id,
+        text,
+        on_recorded=lambda: save_handled(run_dir, handled) if handled else None,
+    )
+    print(f"Тикет {ticket_id}: доработка по PR {pr_id}: {outcome}", flush=True)
+    _auto_export(settings, ticket_id)
+    return str(outcome)
+
+
 def _watch(settings: Settings, args: argparse.Namespace) -> int:
     import signal
     import threading
 
     from ario.fsutil import RunLock
     from ario.watch import SeenLedger, Watcher
+    from ario.webhook import WebhookServer, check_secret
 
     missing = _tfs_missing(settings)
     if missing:
@@ -310,6 +377,12 @@ def _watch(settings: Settings, args: argparse.Namespace) -> int:
     if interval < 1:
         print("Ошибка: интервал опроса — не меньше 1 минуты", file=sys.stderr)
         return 2
+    if args.webhook:
+        try:
+            check_secret(settings.webhook_secret)
+        except ValueError as e:
+            print(f"Ошибка настройки: {e}", file=sys.stderr)
+            return 2
     _use_system_certificates()
     store = TicketStore(settings.tickets_dir)
     ledger = SeenLedger(settings.data_dir / "watch-seen.json")
@@ -324,6 +397,7 @@ def _watch(settings: Settings, args: argparse.Namespace) -> int:
         print("Остановка: текущий тикет дорабатывает, новые не берутся (Ctrl+C ещё раз: сразу)")
 
     previous = signal.signal(signal.SIGINT, on_interrupt)
+    server: WebhookServer | None = None
     try:
         with RunLock(settings.runs_dir / "_watch"):  # до сборки агентов: второй наблюдатель отказ
             try:
@@ -342,21 +416,47 @@ def _watch(settings: Settings, args: argparse.Namespace) -> int:
                 _auto_export(settings, ticket_id)
                 return str(outcome)
 
+            def rework(pr_id: int) -> str | None:
+                return _rework_for_pr(settings, store, orchestrator, pr_id)
+
             watcher = Watcher(
                 store=store,
                 fetch=fetch,
                 process=process,
+                rework=rework,
                 interval_seconds=interval * 60,
                 mask=masker.mask_text,
                 stop=stop,
                 log=lambda line: print(line, flush=True),
             )
+            if args.webhook:
+                try:
+                    server = WebhookServer(
+                        host=settings.webhook_host,
+                        port=settings.webhook_port,
+                        secret=settings.webhook_secret or "",
+                        on_signal=watcher.notify,
+                        log=lambda line: print(line, flush=True),
+                    )
+                except OSError as e:  # например, порт занят: только создание сервера
+                    print(f"Ошибка: приёмник вебхука не запущен: {e}", file=sys.stderr)
+                    return 2
+                server.start()
+                print(f"Вебхук слушает {settings.webhook_host}:{server.port} {DEFAULT_PATH}")
+                if settings.webhook_host not in ("127.0.0.1", "localhost", "::1"):
+                    print(
+                        "Предупреждение: приёмник доступен не только с этой машины: нужен "
+                        "TLS-прокси или закрытая сеть (пароль Basic идёт открытым текстом)",
+                        file=sys.stderr,
+                    )
             print(f"ario watch: опрос каждые {interval} мин, очередь tickets/in-progress, inbox")
             watcher.run(once=args.once)
     except RunInProgressError:
         print("Ошибка: другой ario watch уже запущен (блокировка runs/_watch)", file=sys.stderr)
         return 2
     finally:
+        if server is not None:
+            server.stop()
         signal.signal(signal.SIGINT, previous)
     return 0
 
@@ -364,10 +464,8 @@ def _watch(settings: Settings, args: argparse.Namespace) -> int:
 def _rework(settings: Settings, args: argparse.Namespace) -> int:
     """Доработка по замечаниям: из аргументов, файлов и обсуждения PR."""
     from ario.orchestrator import ReworkLimitError, TicketNotReworkableError
-    from ario.pr_remarks import collect_remarks, load_handled, save_handled
-    from ario.publish import AGENT_REPLY_MARK, default_client, read_publication
-    from ario.repos import RepoRegistry, RepoSelectionError
-    from ario.state import StateStore
+    from ario.pr_remarks import save_handled
+    from ario.repos import RepoSelectionError
     from ario.tfs.client import TfsError
 
     run_dir = settings.runs_dir / args.ticket_id
@@ -381,25 +479,7 @@ def _rework(settings: Settings, args: argparse.Namespace) -> int:
     handled_update: dict[str, int] = {}
     if args.from_pr:
         try:
-            state = StateStore(settings.runs_dir).load(args.ticket_id)
-            publication = read_publication(run_dir)
-            if state is None or not publication or not publication.get("pr_id"):
-                raise ValueError("у тикета нет PR (runs/<id>/publish.json): сначала публикация")
-            registry = RepoRegistry.from_settings(settings)
-            profile = registry.get(state.repo) if state.repo else registry.default
-            config = profile.publish if profile is not None else None
-            if config is None:
-                raise ValueError("в профиле репозитория нет блока publish")
-            token = os.environ.get(config.pat_env, "").strip()
-            if not token:
-                raise ValueError(f"не задан токен {config.pat_env}")
-            _use_system_certificates()
-            pr_id = int(publication["pr_id"])
-            with default_client(config, token) as client:
-                threads = client.pull_request_threads(config.repository, pr_id)
-            text, handled_update = collect_remarks(
-                threads, pr_id, load_handled(run_dir), agent_mark=AGENT_REPLY_MARK
-            )
+            text, handled_update = _gather_pr_remarks(settings, args.ticket_id)
         except (ValueError, TfsError, ConfigError, RepoSelectionError) as e:
             print(f"Ошибка: {e}", file=sys.stderr)
             return 2

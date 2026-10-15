@@ -25,7 +25,7 @@ TFS (доска) ─ ario fetch / ario watch ─► tickets/inbox/<id>.md
 | Что | Файлы |
 |---|---|
 | Команды | `cli.py` (run, watch, rework, fetch, resume, trace, eval, export-otel) |
-| Ядро потока | `orchestrator.py` (машина состояний), `pipeline.py` (порядок этапов), `stage_names.py`, `state.py` (`runs/<id>/state.json`), `store.py` (папки тикета), `watch.py` (опрос и очередь) |
+| Ядро потока | `orchestrator.py` (машина состояний), `pipeline.py` (порядок этапов), `stage_names.py`, `state.py` (`runs/<id>/state.json`), `store.py` (папки тикета), `watch.py` (опрос и очередь), `webhook.py` (приёмник вебхуков TFS, будит `watch`) |
 | Агенты | `agents/`: `analyst.py`, `developer.py`, `reviewer.py` (этапы), `backend.py` (цикл агента на OpenHands SDK), `readonly_tools.py` и `dev_tools.py` (инструменты), `prompts.py`, `spec.py` (AGENTS.md, навыки), `verdicts.py` (формат вердиктов) |
 | Инструменты | `tools/`: `git.py` (без commit и push), `build.py`, `edit.py`, `proc.py` |
 | Репозитории | `repos.py` (профили из `repos.yaml`: путь, ветки, сборка, знания, публикация), `branches.py` |
