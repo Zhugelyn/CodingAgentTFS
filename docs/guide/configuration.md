@@ -20,6 +20,7 @@
 | `TFS_WRITE`, `TFS_WRITE_PAT`, `ARIO_TICKET_FLOW` | Запись на доску: включатель, токен записи, файл потока состояний (раздел «Запись на доску» ниже) |
 | `ARIO_PUBLISH` | Включает push и PR (раздел «Push и PR» ниже), нужен блок `publish` в профиле |
 | `ARIO_POLL_MINUTES` | Как часто `ario watch` опрашивает TFS, минут (по умолчанию 5) |
+| `rework_started` в `ticket-flow.yaml` | Состояние на доске при доработке по замечаниям (`ario rework`) |
 | `ARIO_REPOS` | Файл профилей репозиториев (раздел «Несколько репозиториев» ниже); без него работает профиль из `RX_PATH` |
 | `ARIO_OTLP_ENDPOINT`, `ARIO_OTLP_LLM_CONTENT` | Графики и живая выгрузка запросов в Phoenix ([phoenix.md](phoenix.md)) |
 

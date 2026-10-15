@@ -19,7 +19,7 @@ from ario.errors import StageFailed
 from ario.fsutil import atomic_write_text
 from ario.orchestrator import Stage, StageContext
 from ario.repos import NO_REPO
-from ario.stage_names import review_stage
+from ario.stage_names import FIRST_HUMAN_ATTEMPT, review_stage
 from ario.tools.git import GitRepo, Runner
 from ario.tools.proc import ToolError, run_process
 
@@ -88,7 +88,15 @@ def make_reviewer_stage(
             root=rx,
             toolset=ReviewerToolset(rx, guard, git),
             instructions=spec.instructions,
-            task=reviewer_task(ctx.ticket, plan_md, development_md, diff, attempt, MAX_REVIEWS),
+            task=reviewer_task(
+                ctx.ticket,
+                plan_md,
+                development_md,
+                diff,
+                attempt,
+                MAX_REVIEWS,
+                human_rework=attempt >= FIRST_HUMAN_ATTEMPT,
+            ),
             tool_names=spec.tools,
             skill_paths=spec.skill_paths,
             max_steps=ctx.guardrails.max_steps(ROLE),

@@ -140,6 +140,24 @@ class GitRepo:
             self._git("switch", name)
         return same
 
+    def switch_to_ticket_branch(self, ticket_id: str, ticket_type: str | None = None) -> bool:
+        """Переключает клон на уже существующую ветку тикета (дерево должно быть чистым).
+
+        Нужна для доработки: после публикации клон мог остаться на другой ветке. `False`, если
+        клон уже на ней; ветки нет — `ToolError`.
+        """
+        name = self.branch_for(ticket_id, ticket_type)
+        if self.current_branch() == name:
+            return False
+        if not self.branch_exists(name):
+            raise ToolError(
+                f"Ветки {name} нет в клоне: получите её (`git fetch`, `git switch {name}`) "
+                "и повторите"
+            )
+        self.ensure_clean()
+        self._git("switch", name)
+        return True
+
     def ensure_on_ticket_branch(self, ticket_id: str, ticket_type: str | None = None) -> None:
         expected = self.branch_for(ticket_id, ticket_type)
         actual = self.current_branch()

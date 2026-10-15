@@ -567,7 +567,15 @@ def test_stage_names_of_the_pipeline_match_the_names_the_reporter_listens_to() -
             raise AssertionError
 
     names = [s.name for s in build_pipeline(Unused())]
-    assert names == ["analysis", "development", "review", "development-2", "review-2", "publish"]
+    assert names == [
+        "analysis",
+        "development",
+        "review",
+        "development-2",
+        "review-2",
+        *[f"{kind}-{n}" for n in (3, 4, 5) for kind in ("development", "review")],
+        "publish",
+    ]
     assert set(STAGE_STARTED) | set(STAGE_FINISHED) | set(REVIEWS) <= set(names)
 
 
@@ -589,3 +597,21 @@ def test_pr_created_moves_the_ticket_and_the_final_comment_has_the_pr_link(
     assert [c[2] for c in recorder.calls if c[0] == "state"] == ["ReadyForTesting"]
     (comment,) = [c for c in recorder.calls if c[0] == "comment"]
     assert "PR: https://git.example.test/pr/7" in comment[3]
+
+
+# --- доработка по замечаниям (S19) -------------------------------------------------------------
+def test_rework_returns_the_ticket_to_development_and_the_comment_counts_rounds(
+    settings: Settings, tmp_path: Path
+) -> None:
+    def rework(ctx: StageContext) -> None:
+        (ctx.run_dir / "rework-1.md").write_text("Замечание\n", encoding="utf-8")
+
+    tfs_ticket(settings)
+    recorder = Recorder()
+    flow = FLOW.replace(
+        "comments:", "  rework_started: {to: Development, from: [ReadyForTesting]}\ncomments:"
+    )
+    assert run_flow(settings, tmp_path, [Stage("development-3", rework)], recorder, flow) == "done"
+    assert recorder.calls[0] == ("state", "43031", "Development", "ReadyForTesting")
+    (comment,) = [c for c in recorder.calls if c[0] == "comment"]
+    assert "Доработок по замечаниям человека: 1." in comment[3]

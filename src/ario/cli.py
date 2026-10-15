@@ -1,4 +1,4 @@
-"""Командная строка: `ario run`, `watch`, `fetch`, `resume`, `trace`, `eval`, `export-otel`."""
+"""Командная строка `ario`: run, watch, rework, fetch, resume, trace, eval, export-otel."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ario.agents.backend import OpenHandsBackend
 from ario.config import ConfigError, Settings, check_sdk_telemetry
+from ario.errors import StageFailed
 from ario.fsutil import RunInProgressError
 from ario.guardrails import Guardrails
 from ario.orchestrator import (
@@ -53,6 +54,26 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="минут между опросами (по умолчанию ARIO_POLL_MINUTES)",
+    )
+    rework = sub.add_parser(
+        "rework", help="доработка завершённого тикета по замечаниям человека (к PR)"
+    )
+    rework.add_argument("ticket_id")
+    rework.add_argument(
+        "--note", action="append", default=[], help="текст замечания (можно несколько)"
+    )
+    rework.add_argument(
+        "--file",
+        type=Path,
+        action="append",
+        default=[],
+        help="файл с замечаниями (можно несколько)",
+    )
+    rework.add_argument(
+        "--from-pr", action="store_true", help="взять новые замечания из обсуждения PR тикета"
+    )
+    rework.add_argument(
+        "--dry-run", action="store_true", help="показать замечания и выйти, ничего не запуская"
     )
     resume = sub.add_parser("resume", help="возобновить тикет из needs-human с упавшего этапа")
     resume.add_argument("ticket_id")
@@ -340,6 +361,90 @@ def _watch(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _rework(settings: Settings, args: argparse.Namespace) -> int:
+    """Доработка по замечаниям: из аргументов, файлов и обсуждения PR."""
+    from ario.orchestrator import ReworkLimitError, TicketNotReworkableError
+    from ario.pr_remarks import collect_remarks, load_handled, save_handled
+    from ario.publish import AGENT_REPLY_MARK, default_client, read_publication
+    from ario.repos import RepoRegistry, RepoSelectionError
+    from ario.state import StateStore
+    from ario.tfs.client import TfsError
+
+    run_dir = settings.runs_dir / args.ticket_id
+    parts: list[str] = [note.strip() for note in args.note if note.strip()]
+    for path in args.file:
+        try:
+            parts.append(path.read_text(encoding="utf-8").strip())
+        except (OSError, UnicodeDecodeError) as e:  # файл не в UTF-8 тоже не трейсбек
+            print(f"Ошибка: не прочитан файл замечаний {path}: {e}", file=sys.stderr)
+            return 2
+    handled_update: dict[str, int] = {}
+    if args.from_pr:
+        try:
+            state = StateStore(settings.runs_dir).load(args.ticket_id)
+            publication = read_publication(run_dir)
+            if state is None or not publication or not publication.get("pr_id"):
+                raise ValueError("у тикета нет PR (runs/<id>/publish.json): сначала публикация")
+            registry = RepoRegistry.from_settings(settings)
+            profile = registry.get(state.repo) if state.repo else registry.default
+            config = profile.publish if profile is not None else None
+            if config is None:
+                raise ValueError("в профиле репозитория нет блока publish")
+            token = os.environ.get(config.pat_env, "").strip()
+            if not token:
+                raise ValueError(f"не задан токен {config.pat_env}")
+            _use_system_certificates()
+            pr_id = int(publication["pr_id"])
+            with default_client(config, token) as client:
+                threads = client.pull_request_threads(config.repository, pr_id)
+            text, handled_update = collect_remarks(
+                threads, pr_id, load_handled(run_dir), agent_mark=AGENT_REPLY_MARK
+            )
+        except (ValueError, TfsError, ConfigError, RepoSelectionError) as e:
+            print(f"Ошибка: {e}", file=sys.stderr)
+            return 2
+        if text:
+            parts.append(text)
+    if not parts:
+        print(
+            "Ошибка: нет замечаний: укажите --note, --file или --from-pr "
+            "(новых замечаний в PR нет)",
+            file=sys.stderr,
+        )
+        return 2
+    if args.dry_run:
+        # замечания недоверенный текст: управляющие символы терминала не выводим
+        print(_CONTROL_CHARS.sub("?", "\n\n".join(parts)))
+        print("\nДоработка не запущена (--dry-run).")
+        return 0
+    try:
+        orchestrator, _ = _build_orchestrator(settings, None)
+        outcome = orchestrator.rework(
+            args.ticket_id,
+            "\n\n".join(parts),
+            on_recorded=lambda: save_handled(run_dir, handled_update) if handled_update else None,
+        )
+    except (
+        ConfigError,
+        TicketNotFoundError,
+        InvalidTicketIdError,
+        TicketNotReworkableError,
+        ReworkLimitError,
+        RunInProgressError,
+    ) as e:
+        print(f"Ошибка: {e}", file=sys.stderr)
+        return 2
+    except StageFailed as e:  # замечания не прошли проверку injection
+        print(f"Ошибка: {e.reason}", file=sys.stderr)
+        return 2
+    except TicketNotTakenError as e:
+        print(f"Доработка тикета {args.ticket_id} не начата: {e.reason}", file=sys.stderr)
+        return 3
+    print(f"Тикет {args.ticket_id}: {outcome}")
+    _auto_export(settings, args.ticket_id)
+    return 0 if outcome == "done" else 1
+
+
 def _fetch(settings: Settings, args: argparse.Namespace) -> int:
     from ario.tfs.client import TfsError
     from ario.tfs.fetch import CANDIDATES_LIMIT
@@ -456,13 +561,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as e:
         print(f"Ошибка настройки: {e}", file=sys.stderr)
         return 2
-    if args.command in ("run", "resume", "eval", "watch"):
+    if args.command in ("run", "resume", "eval", "watch", "rework"):
         try:
             check_sdk_telemetry(os.environ)  # SDK не должен слать тексты запросов наружу
         except ConfigError as e:
             print(f"Ошибка настройки: {e}", file=sys.stderr)
             return 2
-    uses_model = args.command in ("run", "resume", "eval", "watch") and not getattr(
+    uses_model = args.command in ("run", "resume", "eval", "watch", "rework") and not getattr(
         args, "dry_run", False
     )  # `watch --dry-run` модель не вызывает: выгрузка запросов ему не нужна
     llm_content = uses_model and settings.otlp_llm_content
@@ -476,6 +581,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _fetch(settings, args)
     if args.command == "watch":
         return _watch(settings, args)
+    if args.command == "rework":
+        return _rework(settings, args)
     if args.command == "export-otel":
         return _export_otel(settings, args)
     try:

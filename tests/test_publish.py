@@ -244,6 +244,7 @@ def run_stage(
         stage_settings: Settings | None = None,
         plan: dict[str, Any] | None = None,
         report: str = "Заменил 1 на 2 в A.cs",
+        continued: bool = False,
     ) -> tuple[str, Api, Settings]:
         api = api or Api()
         config = config or publish_config()
@@ -251,9 +252,10 @@ def run_stage(
             monkeypatch.setenv(config.pat_env, token)
         profile = RepoProfile(name="rx", path=world["work"], base_branch="master", publish=config)
         base = stage_settings or replace(settings, publish=publish)
-        inbox = base.tickets_dir / "inbox"
-        inbox.mkdir(parents=True, exist_ok=True)
-        (inbox / "43031.md").write_text(TICKET_TEXT, encoding="utf-8")
+        # continued: тикет уже в работе (доработка, возобновление), а не новая подача из inbox/
+        folder = base.tickets_dir / ("in-progress" if continued else "inbox")
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "43031.md").write_text(TICKET_TEXT, encoding="utf-8")
         run_dir = base.runs_dir / "43031"
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "analysis.json").write_text(

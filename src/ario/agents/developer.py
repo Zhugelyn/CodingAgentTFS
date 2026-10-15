@@ -17,7 +17,7 @@ from ario.guardrails import PathGuard
 from ario.guardrails.config import EnvConfig
 from ario.orchestrator import Stage, StageContext
 from ario.repos import NO_REPO, RepoProfile
-from ario.stage_names import development_stage
+from ario.stage_names import FIRST_HUMAN_ATTEMPT, development_stage, human_round, rework_file
 from ario.ticket import Ticket
 from ario.tools.build import BuildTool as ProjectBuilder
 from ario.tools.git import GitRepo, Runner
@@ -73,6 +73,11 @@ def _prepare_branch(
         if current == name:  # возобновление после падения или доработка: продолжаем в своей ветке
             trace.event("branch_reused", stage=stage, agent=ROLE, branch=name)
             return name
+        if attempt >= FIRST_HUMAN_ATTEMPT:  # доработка по замечаниям человека: своя ветка тикета
+            git.ensure_clean()
+            if git.switch_to_ticket_branch(ticket.id, ticket.type):
+                trace.event("branch_reused", stage=stage, agent=ROLE, branch=name, switched=True)
+            return name
         if attempt > 1:
             raise StageFailed(
                 f"Для доработки ожидалась ветка {name}, сейчас {current or 'detached HEAD'}"
@@ -126,7 +131,13 @@ def make_developer_stage(
         analysis = _load_analysis(ctx)
 
         feedback: str | None = None
-        if attempt > 1:
+        round_number = human_round(attempt)
+        if round_number is not None:
+            remarks = ctx.run_dir / rework_file(round_number)
+            if not remarks.is_file():
+                raise StageFailed(f"Нет замечаний человека для доработки: {remarks.name}")
+            feedback = remarks.read_text(encoding="utf-8")
+        elif attempt > 1:
             review = ctx.run_dir / f"review-{attempt - 1}.md"
             if not review.is_file():
                 raise StageFailed(f"Нет замечаний reviewer для доработки: {review.name}")
@@ -136,7 +147,7 @@ def make_developer_stage(
         scanner = ctx.guardrails.scanner
         scanner.check(plan_md, "плане analyst")  # вторичная инъекция через артефакты
         if feedback:
-            scanner.check(feedback, "замечаниях reviewer")
+            scanner.check(feedback, "замечаниях к доработке")
 
         env = ctx.guardrails.config.env
         guard = ctx.guardrails.path_guard(rx, repo.write_deny_extra)
@@ -150,7 +161,7 @@ def make_developer_stage(
             root=rx,
             toolset=toolset,
             instructions=spec.instructions,
-            task=developer_task(ctx.ticket, plan_md, feedback),
+            task=developer_task(ctx.ticket, plan_md, feedback, from_human=round_number is not None),
             tool_names=spec.tools,
             skill_paths=spec.skill_paths,
             max_steps=ctx.guardrails.max_steps(ROLE),

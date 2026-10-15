@@ -27,12 +27,19 @@ from ario.guardrails.boundaries import PathGuard, clean_env
 from ario.guardrails.config import EnvConfig
 from ario.orchestrator import Stage, StageContext
 from ario.repos import PublishConfig, RepoProfile
-from ario.stage_names import PUBLISH
+from ario.stage_names import (
+    MAX_HUMAN_REWORKS,
+    PUBLISH,
+    development_stage,
+    human_attempt,
+    rework_file,
+)
 from ario.tfs.client import TfsClient, TfsError
 from ario.tools.git import GitRepo, Runner
 from ario.tools.proc import ProcResult, ToolError, run_process
 
 PUBLISH_FILE = "publish.json"
+AGENT_REPLY_MARK = "Доработка агентом"  # по метке собственные ответы в PR отличаем от замечаний
 MAX_PR_DESCRIPTION = 3900  # у TFS лимит описания PR 4000 символов
 MAX_REPORT_CHARS = 1500
 MAX_PLAN_STEPS = 8
@@ -187,13 +194,24 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+_ATTEMPTS = range(1, human_attempt(MAX_HUMAN_REWORKS) + 1)
+
+
 def _verdicts(ctx: StageContext) -> list[str]:
-    return [v for n in (1, 2) if (v := read_review_verdict(ctx.run_dir, n))]
+    return [v for n in _ATTEMPTS if (v := read_review_verdict(ctx.run_dir, n))]
+
+
+def latest_round(run_dir: Path) -> int:
+    """Номер последнего запрошенного раунда доработки по замечаниям человека (0, если не было)."""
+    return max(
+        (n for n in range(1, MAX_HUMAN_REWORKS + 1) if (run_dir / rework_file(n)).is_file()),
+        default=0,
+    )
 
 
 def last_review_approved(ctx: StageContext) -> bool:
-    """Решающим считается последнее ревью (после доработки это второе)."""
-    for attempt in (2, 1):
+    """Решающим считается самое позднее ревью (после доработок это последняя попытка)."""
+    for attempt in reversed(_ATTEMPTS):
         verdict = read_review_verdict(ctx.run_dir, attempt)
         if verdict is not None:
             return verdict == "approve"
@@ -273,6 +291,27 @@ def make_publish_stage(
     return Stage(PUBLISH, run)
 
 
+def _reply_in_pull_request(
+    ctx: StageContext,
+    config: PublishConfig,
+    client_factory: ClientFactory,
+    token: str,
+    pr_id: int,
+    round_number: int,
+) -> None:
+    """Итог доработки пишется в PR отдельным комментарием; сбой комментария этап не роняет."""
+    report = ctx.run_dir / f"{development_stage(human_attempt(round_number))}.md"
+    summary = report.read_text(encoding="utf-8")[:MAX_REPORT_CHARS] if report.is_file() else ""
+    text = neutralize_refs(
+        ctx.mask(f"{AGENT_REPLY_MARK} №{round_number} по замечаниям учтена.\n\n{summary}".strip())
+    )
+    try:
+        with client_factory(config, token) as client:
+            client.add_pull_request_comment(config.repository, pr_id, text)
+    except TfsError as e:
+        ctx.trace.event("pr_comment_failed", stage=PUBLISH, reason=ctx.mask(str(e)))
+
+
 def _publish(
     ctx: StageContext,
     repo: RepoProfile,
@@ -316,6 +355,9 @@ def _publish(
 
     with client_factory(config, token) as client:
         existing = client.find_pull_request(config.repository, branch, config.target_branch)
+        previous_pr = (read_publication(ctx.run_dir) or {}).get("pr_id")
+        if existing is None and previous_pr:  # прежний PR закрыт или отменён: откроется новый
+            ctx.trace.event("pr_replaced", stage=PUBLISH, previous_pr=previous_pr)
         pr = existing or client.create_pull_request(
             config.repository,
             branch,
@@ -329,12 +371,17 @@ def _publish(
     pr_id = pr.get("pullRequestId")
     if not isinstance(pr_id, int) or isinstance(pr_id, bool):
         raise TfsError("TFS не вернул номер PR")
+    rework_round = latest_round(ctx.run_dir)
+    previous = read_publication(ctx.run_dir) or {}
+    if rework_round > int(previous.get("rework_round") or 0):
+        _reply_in_pull_request(ctx, config, client_factory, token, pr_id, rework_round)
     result = {
         "branch": branch,
         "commit": publisher.head(),
         "pr_id": pr_id,
         "pr_url": pull_request_url(config, pr_id),
         "target": config.target_branch,
+        "rework_round": rework_round,
     }
     atomic_write_text(ctx.run_dir / PUBLISH_FILE, json.dumps(result, ensure_ascii=False, indent=2))
     ctx.trace.event(

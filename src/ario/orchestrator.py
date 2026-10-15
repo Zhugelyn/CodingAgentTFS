@@ -11,9 +11,18 @@ from typing import Protocol
 
 from ario.config import Settings
 from ario.errors import InjectionDetected, LimitExceeded, StageFailed
-from ario.fsutil import RunLock
+from ario.fsutil import RunLock, atomic_write_text
 from ario.guardrails import Deadline, Guardrails
+from ario.pr_remarks import HANDLED_FILE
 from ario.repos import RepoProfile, RepoRegistry, RepoSelectionError
+from ario.stage_names import (
+    MAX_HUMAN_REWORKS,
+    PUBLISH,
+    development_stage,
+    human_attempt,
+    review_stage,
+    rework_file,
+)
 from ario.state import RunState, StateStore
 from ario.store import Folder, TicketStore, validate_ticket_id
 from ario.ticket import Ticket, TicketError, load_ticket
@@ -27,7 +36,9 @@ __all__ = [
     "StageContext",
     "StageFailed",
     "TicketAlreadyFinishedError",
+    "ReworkLimitError",
     "TicketNotReopenableError",
+    "TicketNotReworkableError",
     "TicketNotTakenError",
 ]
 
@@ -38,6 +49,14 @@ class TicketAlreadyFinishedError(RuntimeError):
 
 class TicketNotReopenableError(RuntimeError):
     """Тикет нельзя возобновить: он не в `needs-human/` или нет состояния прогона."""
+
+
+class TicketNotReworkableError(RuntimeError):
+    """Доработать нельзя: тикет не в `done/` или нет состояния прогона."""
+
+
+class ReworkLimitError(RuntimeError):
+    """Исчерпан лимит доработок по замечаниям человека на тикет."""
 
 
 class TicketNotTakenError(RuntimeError):
@@ -197,6 +216,74 @@ class Orchestrator:
             self._trace(ticket_id, state.trace_id).event("run_reopened")
         return self.run(ticket_id)
 
+    def rework(
+        self, ticket_id: str, remarks: str, on_recorded: Callable[[], None] | None = None
+    ) -> Folder:
+        """Доработка завершённого тикета по замечаниям человека (например, к PR).
+
+        Замечания проверяются сканером injection и сохраняются как `runs/<id>/rework-<n>.md`;
+        этапы раунда (developer, reviewer) и publish становятся ожидающими, тикет возвращается
+        в работу, и поток продолжается в той же ветке. Раундов не больше `MAX_HUMAN_REWORKS`.
+        `on_recorded` вызывается, когда замечания записаны, а длинный прогон ещё не начался.
+        """
+        validate_ticket_id(ticket_id)
+        self._tickets.ensure_dirs()
+        folder = self._tickets.locate(ticket_id)
+        if folder != "done":
+            raise TicketNotReworkableError(
+                f"Тикет {ticket_id} сейчас в {folder}/: доработка возможна для завершённого "
+                "тикета (done/); для остановившегося используйте resume"
+            )
+        state = self._states.load(ticket_id)
+        if state is None:
+            raise TicketNotReworkableError(f"Нет состояния прогона runs/{ticket_id}/state.json")
+        text = remarks.strip()
+        if not text:
+            raise TicketNotReworkableError("Замечаний нет: нечего дорабатывать")
+        with RunLock(self._states.run_dir(ticket_id)):
+            run_dir = self._states.run_dir(ticket_id)
+            round_number = (
+                max(
+                    (
+                        n
+                        for n in range(1, MAX_HUMAN_REWORKS + 1)
+                        if (run_dir / rework_file(n)).exists()
+                    ),
+                    default=0,
+                )
+                + 1
+            )
+            if round_number > MAX_HUMAN_REWORKS:
+                raise ReworkLimitError(
+                    f"Исчерпан лимит доработок по замечаниям ({MAX_HUMAN_REWORKS}): "
+                    "дальше вручную или через нового исполнителя"
+                )
+            self._guardrails.scanner.check(text, "замечаниях к доработке")
+            atomic_write_text(
+                run_dir / rework_file(round_number), self._masker.mask_text(text) + "\n"
+            )
+            self._tickets.move(ticket_id, "done", "in-progress")
+            attempt = human_attempt(round_number)
+            for name in (development_stage(attempt), review_stage(attempt), PUBLISH):
+                state.stage(name).status = "pending"
+            state.status, state.reason, state.started_at = "running", None, utc_now()
+            state.active_seconds = 0.0  # новый раунд получает новый запас времени
+            self._states.save(state)
+            self._trace(ticket_id, state.trace_id).event(
+                "rework_requested", round=round_number, chars=len(text)
+            )
+        if on_recorded is not None:
+            on_recorded()
+        return self.run(ticket_id)
+
+    def _clear_rework_artifacts(self, ticket_id: str) -> None:
+        """Новая подача тикета начинает без замечаний прошлых раундов: иначе устаревший
+        `rework-<n>.md` запустил бы доработку по чужим замечаниям."""
+        run_dir = self._states.run_dir(ticket_id)
+        for n in range(1, MAX_HUMAN_REWORKS + 1):
+            (run_dir / rework_file(n)).unlink(missing_ok=True)
+        (run_dir / HANDLED_FILE).unlink(missing_ok=True)
+
     def _run_locked(self, ticket_id: str, folder: Folder) -> Folder:
         if folder == "inbox":
             others = [f for f in self._tickets.locations(ticket_id) if f != "inbox"]
@@ -214,6 +301,7 @@ class Orchestrator:
                 trace.event("ticket_not_taken", reason=e.reason)
                 self._tickets.add_comment(ticket_id, "inbox", "orchestrator", "not_taken", e.reason)
                 raise TicketNotTakenError(e.reason) from e
+            self._clear_rework_artifacts(ticket_id)  # замечания прошлой подачи к новой не относятся
             self._states.save(state)  # выбор профиля не должен пропасть, если процесс убьют сейчас
             self._tickets.move(ticket_id, "inbox", "in-progress")
         else:

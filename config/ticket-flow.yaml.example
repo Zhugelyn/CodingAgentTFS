@@ -12,6 +12,9 @@ states:
   development_started: {to: Development, from: [ReadyForDev, ToDo]}  # старт developer
   # PR открыт (этап publish, нужны ARIO_PUBLISH=1 и блок publish в профиле репозитория):
   pr_created: {to: ReadyForTesting, from: [Development]}
+  # Доработка по замечаниям человека (ario rework): тикет возвращается в работу, а после нового
+  # push снова срабатывает pr_created.
+  rework_started: {to: Development, from: [ReadyForTesting, Acceptance]}
   # review_approved (reviewer одобрил) ставит состояние раньше push и PR: нужен только если
   # публикации нет, иначе тикет уйдёт тестировщикам, пока изменения лежат в локальной ветке.
   # review_approved: {to: ReadyForTesting, from: [Development]}

@@ -266,6 +266,35 @@ class TfsClient:
         )
         return data
 
+    def pull_request_threads(self, repository: str, pr_id: int) -> list[dict[str, Any]]:
+        """Ветки обсуждения PR (комментарии ревьюеров) для доработки по замечаниям."""
+        self._require("git", "чтение обсуждения pull request")
+        data = self._request(
+            "GET",
+            f"{self._project}/_apis/git/repositories/{quote(repository, safe='')}"
+            f"/pullrequests/{int(pr_id)}/threads",
+            {"api-version": API_VERSION},
+        )
+        threads = data.get("value")
+        if not isinstance(threads, list):
+            raise TfsError("Ответ обсуждения PR без списка value")
+        return [t for t in threads if isinstance(t, dict)]
+
+    def add_pull_request_comment(self, repository: str, pr_id: int, text: str) -> None:
+        """Новая закрытая ветка в PR с итогом доработки. Не повторяется при обрыве."""
+        self._require("git", "комментарий к pull request")
+        self._request(
+            "POST",
+            f"{self._project}/_apis/git/repositories/{quote(repository, safe='')}"
+            f"/pullrequests/{int(pr_id)}/threads",
+            {"api-version": API_VERSION},
+            payload={
+                "comments": [{"parentCommentId": 0, "content": text, "commentType": "text"}],
+                "status": "closed",
+            },
+            idempotent=False,
+        )
+
     # --- транспорт ----------------------------------------------------------------------------
     def _request(
         self,

@@ -18,15 +18,30 @@ from ario.agents.verdicts import VerdictError, load_analysis, read_review_verdic
 from ario.branches import branch_name
 from ario.config import ConfigError, Settings
 from ario.orchestrator import StageContext
-from ario.publish import read_publication
-from ario.stage_names import ANALYSIS, DEVELOPMENT, PUBLISH, review_stage
+from ario.publish import latest_round, read_publication
+from ario.stage_names import (
+    ANALYSIS,
+    DEVELOPMENT,
+    MAX_HUMAN_REWORKS,
+    PUBLISH,
+    development_stage,
+    human_attempt,
+    review_stage,
+)
 from ario.tfs.client import BOARD_TIMEOUT, TfsClient
 from ario.ticket_system import NullTicketSystem, TfsTicketSystem, TicketSystem, WriteResult
 
 MAX_PLAN_STEPS = 5
-STAGE_STARTED = {ANALYSIS: "analysis_started", DEVELOPMENT: "development_started"}
+STAGE_STARTED = {
+    ANALYSIS: "analysis_started",
+    DEVELOPMENT: "development_started",
+    **{
+        development_stage(human_attempt(n)): "rework_started"
+        for n in range(1, MAX_HUMAN_REWORKS + 1)
+    },
+}
 STAGE_FINISHED = {ANALYSIS: "analysis_done", PUBLISH: "pr_created"}
-REVIEWS = {review_stage(1): 1, review_stage(2): 2}
+REVIEWS = {review_stage(a): a for a in range(1, human_attempt(MAX_HUMAN_REWORKS) + 1)}
 
 
 class _Transition(BaseModel):
@@ -42,6 +57,7 @@ class _States(BaseModel):
     development_started: _Transition | None = None
     review_approved: _Transition | None = None
     pr_created: _Transition | None = None  # после push и открытия PR (S17)
+    rework_started: _Transition | None = None  # доработка по замечаниям человека началась (S19)
 
 
 class _Comments(BaseModel):
@@ -148,6 +164,8 @@ def _done_text(ctx: StageContext) -> str:
     if plan:
         lines.append("План, по которому велась работа:")
         lines += [f"- {step.step}" for step in plan[:MAX_PLAN_STEPS]]
+    if rounds := latest_round(ctx.run_dir):
+        lines.append(f"Доработок по замечаниям человека: {rounds}.")
     if publication and publication.get("pr_url"):
         lines.append(f"PR: {publication['pr_url']}")
     verdicts = [v for n in (1, 2) if (v := _verdict(ctx, n))]

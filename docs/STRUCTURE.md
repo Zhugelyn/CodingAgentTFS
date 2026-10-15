@@ -15,6 +15,7 @@
 TFS (доска) ─ ario fetch / ario watch ─► tickets/inbox/<id>.md
    ─► оркестратор: analysis ─► development ─► review ─► (reject: development-2 ─► review-2) ─► publish
    ─► ветка + PR в репозитории кода;  на доске: состояния и комментарии (нужен человек, готово)
+   ─► замечания к PR ─ ario rework ─► development-3..5 ─► review-3..5 ─► publish (тот же PR)
 ```
 
 Папки состояний тикета: `inbox/` → `in-progress/` → `done/` | `needs-human/`.
@@ -23,13 +24,13 @@ TFS (доска) ─ ario fetch / ario watch ─► tickets/inbox/<id>.md
 
 | Что | Файлы |
 |---|---|
-| Команды | `cli.py` (run, watch, fetch, resume, trace, eval, export-otel) |
+| Команды | `cli.py` (run, watch, rework, fetch, resume, trace, eval, export-otel) |
 | Ядро потока | `orchestrator.py` (машина состояний), `pipeline.py` (порядок этапов), `stage_names.py`, `state.py` (`runs/<id>/state.json`), `store.py` (папки тикета), `watch.py` (опрос и очередь) |
 | Агенты | `agents/`: `analyst.py`, `developer.py`, `reviewer.py` (этапы), `backend.py` (цикл агента на OpenHands SDK), `readonly_tools.py` и `dev_tools.py` (инструменты), `prompts.py`, `spec.py` (AGENTS.md, навыки), `verdicts.py` (формат вердиктов) |
 | Инструменты | `tools/`: `git.py` (без commit и push), `build.py`, `edit.py`, `proc.py` |
 | Репозитории | `repos.py` (профили из `repos.yaml`: путь, ветки, сборка, знания, публикация), `branches.py` |
 | TFS и доска | `tfs/` (`client.py`, `convert.py`, `fetch.py`), `ticket.py` (формат тикета), `ticket_system.py` (запись на доску), `reporting.py` (состояния и комментарии) |
-| Публикация | `publish.py` (коммит, push без force, PR) |
+| Публикация и доработка | `publish.py` (коммит, push без force, PR, ответ в PR), `pr_remarks.py` (замечания из обсуждения PR для `ario rework`) |
 | Защита | `guardrails/` (лимиты, пути, injection), `llm_guard.py` (предел на запрос к модели) |
 | Наблюдаемость | `trace.py` (`traces/<id>/events.jsonl`), `trace_report.py` (`ario trace`), `otel_export.py` и `llm_telemetry.py` (Phoenix), `evals.py` (`ario eval`) |
 | Общее | `config.py` (настройки из `.env`), `errors.py`, `fsutil.py` |
