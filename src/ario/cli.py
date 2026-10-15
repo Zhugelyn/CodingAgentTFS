@@ -1,4 +1,4 @@
-"""Командная строка: `ario run`, `fetch`, `resume`, `trace`, `eval`, `export-otel`."""
+"""Командная строка: `ario run`, `watch`, `fetch`, `resume`, `trace`, `eval`, `export-otel`."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ario.agents.backend import OpenHandsBackend
 from ario.config import ConfigError, Settings, check_sdk_telemetry
@@ -22,8 +22,12 @@ from ario.orchestrator import (
 )
 from ario.pipeline import build_pipeline
 from ario.reporting import build_reporter, write_config_problem
-from ario.store import InvalidTicketIdError, TicketNotFoundError
+from ario.store import InvalidTicketIdError, TicketNotFoundError, TicketStore
 from ario.trace import Masker
+
+if TYPE_CHECKING:
+    from ario.tfs.fetch import FetchReport
+    from ario.watch import SeenLedger
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -34,6 +38,21 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("ticket_id")
     run.add_argument(
         "--repo", default=None, help="профиль репозитория (иначе выбирается по area path и тегам)"
+    )
+    watch = sub.add_parser(
+        "watch", help="автоматически забирать тикеты из TFS и вести их по потоку (очередь inbox/)"
+    )
+    watch.add_argument("--once", action="store_true", help="один цикл (опрос и очередь) и выход")
+    watch.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="показать, что будет взято и что в очереди, ничего не записывая и не запуская",
+    )
+    watch.add_argument(
+        "--interval",
+        type=int,
+        default=None,
+        help="минут между опросами (по умолчанию ARIO_POLL_MINUTES)",
     )
     resume = sub.add_parser("resume", help="возобновить тикет из needs-human с упавшего этапа")
     resume.add_argument("ticket_id")
@@ -151,13 +170,8 @@ _FETCH_MARKS = {
 }
 
 
-def _fetch(settings: Settings, args: argparse.Namespace) -> int:
-    from ario.store import TicketStore
-    from ario.tfs.client import TfsClient, TfsError
-    from ario.tfs.fetch import CANDIDATES_LIMIT, FetchItem, fetch_tickets, query_ids
-    from ario.trace import Masker
-
-    missing = [
+def _tfs_missing(settings: Settings) -> list[str]:
+    return [
         name
         for name, value in (
             ("TFS_URL", settings.tfs_url),
@@ -166,37 +180,194 @@ def _fetch(settings: Settings, args: argparse.Namespace) -> int:
         )
         if not value
     ]
-    if missing or not (settings.tfs_url and settings.tfs_project and settings.tfs_pat):
-        print(f"Ошибка настройки: не заданы {', '.join(missing)}", file=sys.stderr)
-        return 2
-    masker = Masker([settings.tfs_pat])
 
-    def show(item: FetchItem) -> None:
-        # заголовок тикета недоверенный: управляющие символы терминала не выводим
-        detail = _CONTROL_CHARS.sub("?", item.detail)
-        print(f"[{_FETCH_MARKS[item.status]}] {item.ticket_id}: {detail}", flush=True)
 
-    _use_system_certificates()
-    store = TicketStore(settings.tickets_dir)
+def _show_fetch_item(item: Any) -> None:
+    # заголовок тикета недоверенный: управляющие символы терминала не выводим
+    detail = _CONTROL_CHARS.sub("?", item.detail)
+    print(f"[{_FETCH_MARKS[item.status]}] {item.ticket_id}: {detail}", flush=True)
+
+
+def _pull(
+    settings: Settings,
+    store: TicketStore,
+    masker: Masker,
+    *,
+    explicit_ids: list[int] | None = None,
+    dry_run: bool = False,
+    ledger: SeenLedger | None = None,
+    skip_seen: bool = False,
+) -> tuple[FetchReport, list[int]]:
+    """Забирает тикеты из TFS в очередь: единый путь для `fetch` и `watch`.
+
+    Ошибки TFS поднимаются исключением. `ledger` запоминает взятые и уже имевшиеся тикеты,
+    `skip_seen` не берёт тикеты из журнала (так делает `watch`, `fetch --id` их возвращает).
+    """
+    from ario.tfs.client import TfsClient
+    from ario.tfs.fetch import fetch_tickets, query_ids
+
+    with TfsClient(
+        settings.tfs_url or "", settings.tfs_project or "", settings.tfs_pat or ""
+    ) as client:
+        ids = explicit_ids if explicit_ids else query_ids(client, settings.tfs_wiql)
+        candidates = ids
+        if skip_seen and ledger is not None and not explicit_ids:
+            seen = ledger.load()
+            candidates = [i for i in ids if str(i) not in seen]
+        report = fetch_tickets(
+            client,
+            candidates,
+            store,
+            limit=None if explicit_ids else settings.tfs_max_items,
+            dry_run=dry_run,
+            mask=masker.mask_text,
+            on_item=_show_fetch_item,
+        )
+    if ledger is not None and not dry_run:
+        ledger.add(i.ticket_id for i in report.items if i.status in ("fetched", "skipped"))
+    return report, ids
+
+
+def _watch_dry_run(settings: Settings, store: TicketStore, ledger: SeenLedger) -> int:
+    """Проверка опроса без последствий: что взял бы TFS-запрос и что уже стоит в очереди."""
+    from ario.tfs.client import TfsError
+
+    masker = Masker([settings.tfs_pat or ""])
     try:
-        with TfsClient(settings.tfs_url, settings.tfs_project, settings.tfs_pat) as client:
-            explicit: list[int] | None = args.id
-            ids = explicit if explicit else query_ids(client, settings.tfs_wiql)
-            if not ids:
-                print("Подходящих тикетов в TFS нет")
-                return 0
-            report = fetch_tickets(
-                client,
-                ids,
-                store,
-                limit=None if explicit else settings.tfs_max_items,
-                dry_run=args.dry_run,
-                mask=masker.mask_text,
-                on_item=show,
-            )
+        report, _ = _pull(settings, store, masker, dry_run=True, ledger=ledger, skip_seen=True)
     except (TfsError, ValueError) as e:
         print(f"Ошибка: {masker.mask_text(str(e))}", file=sys.stderr)
         return 2
+    queue = [*store.list_ids("in-progress"), *store.list_ids("inbox")]
+    print(
+        f"\nБудет взято {len(report.of('would-fetch'))}; уже в очереди: "
+        f"{', '.join(queue) if queue else 'пусто'}. Ничего не записано и не запущено."
+    )
+    return 0
+
+
+def _build_orchestrator(
+    settings: Settings, repo_override: str | None
+) -> tuple[Orchestrator, Masker]:
+    """Оркестратор с агентами и отчётом на доске: общая сборка для `run`, `resume` и `watch`."""
+    backend = OpenHandsBackend(
+        settings.llm_model, settings.openrouter_api_key, role_models=settings.role_models
+    )
+    stages = build_pipeline(backend)
+    guardrails = Guardrails.load(settings.guardrails_path)
+    if settings.tfs_write:
+        _use_system_certificates()  # корпоративный CA нужен уже на первом переводе состояния
+        if (problem := write_config_problem(settings)) is not None:
+            print(f"Предупреждение: {problem}; запись на доску отключена", file=sys.stderr)
+    masker = Masker.from_environment(
+        os.environ,
+        guardrails.config.env,
+        [settings.openrouter_api_key, settings.tfs_pat, settings.tfs_write_pat],
+    )
+    orchestrator = Orchestrator(
+        settings,
+        stages,
+        guardrails,
+        repo_override=repo_override,
+        observer=build_reporter(settings, masker.mask_text),
+    )
+    return orchestrator, masker
+
+
+def _watch(settings: Settings, args: argparse.Namespace) -> int:
+    import signal
+    import threading
+
+    from ario.fsutil import RunLock
+    from ario.watch import SeenLedger, Watcher
+
+    missing = _tfs_missing(settings)
+    if missing:
+        print(f"Ошибка настройки: не заданы {', '.join(missing)}", file=sys.stderr)
+        return 2
+    interval = args.interval if args.interval is not None else settings.poll_minutes
+    if interval < 1:
+        print("Ошибка: интервал опроса — не меньше 1 минуты", file=sys.stderr)
+        return 2
+    _use_system_certificates()
+    store = TicketStore(settings.tickets_dir)
+    ledger = SeenLedger(settings.data_dir / "watch-seen.json")
+    if args.dry_run:
+        return _watch_dry_run(settings, store, ledger)
+    stop = threading.Event()
+
+    def on_interrupt(signum: int, frame: Any) -> None:
+        if stop.is_set():  # второй Ctrl+C: остановить немедленно
+            raise KeyboardInterrupt
+        stop.set()
+        print("Остановка: текущий тикет дорабатывает, новые не берутся (Ctrl+C ещё раз: сразу)")
+
+    previous = signal.signal(signal.SIGINT, on_interrupt)
+    try:
+        with RunLock(settings.runs_dir / "_watch"):  # до сборки агентов: второй наблюдатель отказ
+            try:
+                orchestrator, masker = _build_orchestrator(settings, None)
+            except ConfigError as e:
+                print(f"Ошибка: {e}", file=sys.stderr)
+                return 2
+
+            def fetch() -> int:
+                report, _ = _pull(settings, store, masker, ledger=ledger, skip_seen=True)
+                return len(report.of("fetched"))
+
+            def process(ticket_id: str) -> str:
+                outcome = orchestrator.run(ticket_id)
+                print(f"Тикет {ticket_id}: {outcome}", flush=True)
+                _auto_export(settings, ticket_id)
+                return str(outcome)
+
+            watcher = Watcher(
+                store=store,
+                fetch=fetch,
+                process=process,
+                interval_seconds=interval * 60,
+                mask=masker.mask_text,
+                stop=stop,
+                log=lambda line: print(line, flush=True),
+            )
+            print(f"ario watch: опрос каждые {interval} мин, очередь tickets/in-progress, inbox")
+            watcher.run(once=args.once)
+    except RunInProgressError:
+        print("Ошибка: другой ario watch уже запущен (блокировка runs/_watch)", file=sys.stderr)
+        return 2
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    return 0
+
+
+def _fetch(settings: Settings, args: argparse.Namespace) -> int:
+    from ario.tfs.client import TfsError
+    from ario.tfs.fetch import CANDIDATES_LIMIT
+    from ario.watch import SeenLedger
+
+    missing = _tfs_missing(settings)
+    if missing:
+        print(f"Ошибка настройки: не заданы {', '.join(missing)}", file=sys.stderr)
+        return 2
+    masker = Masker([settings.tfs_pat or ""])
+    _use_system_certificates()
+    store = TicketStore(settings.tickets_dir)
+    explicit: list[int] | None = args.id
+    try:
+        report, ids = _pull(
+            settings,
+            store,
+            masker,
+            explicit_ids=explicit,
+            dry_run=args.dry_run,
+            ledger=SeenLedger(settings.data_dir / "watch-seen.json"),
+        )
+    except (TfsError, ValueError) as e:
+        print(f"Ошибка: {masker.mask_text(str(e))}", file=sys.stderr)
+        return 2
+    if not ids:
+        print("Подходящих тикетов в TFS нет")
+        return 0
     new = len(report.of("would-fetch" if args.dry_run else "fetched"))
     if not explicit and len(ids) >= CANDIDATES_LIMIT and new < settings.tfs_max_items:
         print(
@@ -285,13 +456,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as e:
         print(f"Ошибка настройки: {e}", file=sys.stderr)
         return 2
-    if args.command in ("run", "resume", "eval"):
+    if args.command in ("run", "resume", "eval", "watch"):
         try:
             check_sdk_telemetry(os.environ)  # SDK не должен слать тексты запросов наружу
         except ConfigError as e:
             print(f"Ошибка настройки: {e}", file=sys.stderr)
             return 2
-    llm_content = args.command in ("run", "resume", "eval") and settings.otlp_llm_content
+    uses_model = args.command in ("run", "resume", "eval", "watch") and not getattr(
+        args, "dry_run", False
+    )  # `watch --dry-run` модель не вызывает: выгрузка запросов ему не нужна
+    llm_content = uses_model and settings.otlp_llm_content
     if llm_content and not _enable_llm_tracing(settings):
         return 2
     if args.command == "trace":
@@ -300,30 +474,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _eval(settings, args)
     if args.command == "fetch":
         return _fetch(settings, args)
+    if args.command == "watch":
+        return _watch(settings, args)
     if args.command == "export-otel":
         return _export_otel(settings, args)
     try:
-        backend = OpenHandsBackend(
-            settings.llm_model, settings.openrouter_api_key, role_models=settings.role_models
-        )
-        stages = build_pipeline(backend)
-        guardrails = Guardrails.load(settings.guardrails_path)
-        if settings.tfs_write:
-            _use_system_certificates()  # корпоративный CA нужен уже на первом переводе состояния
-            if (problem := write_config_problem(settings)) is not None:
-                print(f"Предупреждение: {problem}; запись на доску отключена", file=sys.stderr)
-        masker = Masker.from_environment(
-            os.environ,
-            guardrails.config.env,
-            [settings.openrouter_api_key, settings.tfs_pat, settings.tfs_write_pat],
-        )
-        orchestrator = Orchestrator(
-            settings,
-            stages,
-            guardrails,
-            repo_override=getattr(args, "repo", None),
-            observer=build_reporter(settings, masker.mask_text),
-        )
+        orchestrator, _ = _build_orchestrator(settings, getattr(args, "repo", None))
         if args.command == "resume":
             outcome = orchestrator.reopen(args.ticket_id)
         else:

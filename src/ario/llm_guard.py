@@ -17,6 +17,7 @@ import contextlib
 import contextvars
 import importlib
 import threading
+import time
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -26,6 +27,16 @@ from ario.errors import LimitExceeded
 from ario.guardrails import Deadline
 
 DEFAULT_CALL_TIMEOUT = 420.0
+
+
+def _wait(event: threading.Event, seconds: float, slice_seconds: float = 0.5) -> bool:
+    """Ждёт событие до `seconds`, короткими отрезками: на Windows одно длинное ожидание не
+    прерывается Ctrl+C, и остановка посреди запроса к модели задерживалась бы на минуты."""
+    end = time.monotonic() + seconds
+    while (left := end - time.monotonic()) > 0:
+        if event.wait(min(left, slice_seconds)):
+            return True
+    return event.is_set()
 
 
 def guarded(
@@ -51,7 +62,7 @@ def guarded(
                 finished.set()
 
         threading.Thread(target=work, name="llm-call", daemon=True).start()
-        if not finished.wait(wait):
+        if not _wait(finished, wait):
             if remaining() <= 0:
                 raise LimitExceeded("Превышено время на тикет: запрос к модели не завершился")
             raise Timeout(

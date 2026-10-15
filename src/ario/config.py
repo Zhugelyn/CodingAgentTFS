@@ -27,6 +27,7 @@ def _branch_template(raw: str | None) -> str:
 
 
 DEFAULT_TFS_MAX_ITEMS = 5
+DEFAULT_POLL_MINUTES = 5
 
 
 def _flag(raw: str | None) -> bool:
@@ -113,6 +114,7 @@ class Settings:
         None  # поток «этап → состояние» (образец ticket-flow.yaml.example)
     )
     tfs_wiql: str | None = None  # пусто: запрос по умолчанию (ario.tfs.fetch.default_wiql)
+    poll_minutes: int = DEFAULT_POLL_MINUTES  # как часто `ario watch` опрашивает TFS
     tfs_max_items: int = DEFAULT_TFS_MAX_ITEMS  # сколько новых тикетов берёт один `ario fetch`
     otlp_llm_content: bool = False  # живая выгрузка текста запросов к модели (только локально)
     allow_remote_llm_content: bool = False  # осознанный обход ограничения «только localhost»
@@ -161,6 +163,11 @@ class Settings:
             otlp_endpoint=(os.environ.get("ARIO_OTLP_ENDPOINT") or "").strip() or None,
             otlp_llm_content=_flag(os.environ.get("ARIO_OTLP_LLM_CONTENT")),
             allow_remote_llm_content=_flag(os.environ.get("ARIO_ALLOW_REMOTE_LLM_CONTENT")),
+            poll_minutes=_positive_int(
+                "ARIO_POLL_MINUTES",
+                os.environ.get("ARIO_POLL_MINUTES"),
+                DEFAULT_POLL_MINUTES,
+            ),
             tfs_max_items=_positive_int(
                 "TFS_MAX_ITEMS", os.environ.get("TFS_MAX_ITEMS"), DEFAULT_TFS_MAX_ITEMS
             ),

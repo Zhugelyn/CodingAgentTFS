@@ -63,6 +63,15 @@ class TicketStore:
     def comments_path(self, ticket_id: str, folder: Folder) -> Path:
         return self._dir / folder / f"{ticket_id}.comments.md"
 
+    def list_ids(self, folder: Folder) -> list[str]:
+        """Тикеты папки от самого старого к новому (по времени файла), без файлов комментариев."""
+        directory = self._dir / folder
+        if not directory.is_dir():
+            return []
+        files = [p for p in directory.glob("*.md") if not p.name.endswith(".comments.md")]
+        files.sort(key=lambda p: (p.stat().st_mtime, p.name))
+        return [p.stem for p in files if _TICKET_ID.fullmatch(p.stem)]
+
     def locations(self, ticket_id: str) -> list[Folder]:
         return [f for f in FOLDERS if self.path(ticket_id, f).exists()]
 
