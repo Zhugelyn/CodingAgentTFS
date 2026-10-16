@@ -33,7 +33,7 @@ SCOPE = InstrumentationScope("ario.trace_export", "1")
 # Реальная цена лежит в `ario.cost_usd`, модель в `ario.model`.
 SAME_RESPONSE_NS = 50_000_000  # без usage вызовы одного ответа приходят с разницей в миллисекунды
 # события, которые становятся событиями спана (в них только числа и тип)
-_MARKERS = frozenset({"llm_retry", "budget_nudge", "limit_wrap_up", "verdict_retry"})
+_MARKERS = frozenset({"llm_retry", "budget_nudge", "error_nudge", "limit_wrap_up", "verdict_retry"})
 
 Event = dict[str, Any]
 Attrs = dict[str, Any]
