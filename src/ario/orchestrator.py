@@ -5,19 +5,21 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from ario.agents.verdicts import Routing
 from ario.config import Settings
 from ario.errors import InjectionDetected, LimitExceeded, StageFailed
 from ario.fsutil import RunLock, atomic_write_text
 from ario.guardrails import Deadline, Guardrails
 from ario.pr_remarks import HANDLED_FILE
-from ario.repos import RepoProfile, RepoRegistry, RepoSelectionError
+from ario.repos import Candidates, RepoProfile, RepoRegistry, RepoSelectionError
 from ario.stage_names import (
     MAX_HUMAN_REWORKS,
     PUBLISH,
+    ROUTING,
     development_stage,
     human_attempt,
     review_stage,
@@ -80,6 +82,10 @@ class RunObserver(Protocol):
     def run_finished(self, ctx: StageContext, outcome: str, reason: str | None) -> None: ...
 
 
+def _ignore_selection(profile: RepoProfile, source: str) -> None:
+    return None
+
+
 @dataclass
 class StageContext:
     ticket: Ticket
@@ -92,6 +98,10 @@ class StageContext:
     add_comment: Callable[[str, str, str], None]  # (агент, вердикт, текст) → <id>.comments.md
     mask: Callable[[str], str]  # скрывает секреты в тексте, который пишется в артефакты
     repo: RepoProfile | None = None  # репозиторий тикета; `None`: репозиторий не настроен
+    # репозитории на классификацию (S23); пусто, когда профиль уже выбран правилами
+    candidates: tuple[RepoProfile, ...] = ()
+    # фиксирует выбранный профиль: проверяет дерево, пишет в состояние и в трассу (S23)
+    select_repo: Callable[[RepoProfile, str], None] = field(default=_ignore_selection)
 
 
 @dataclass(frozen=True)
@@ -160,16 +170,34 @@ class Orchestrator:
                 ) from e
 
     def _repo_of_run(self, state: RunState) -> RepoProfile | None:
-        """Профиль начатого прогона: из состояния; прогон, начатый до профилей, — по умолчанию."""
+        """Профиль начатого прогона: из состояния; прогон, начатый до профилей, — по умолчанию.
+
+        Пока этап routing не выбрал репозиторий (`routing_candidates`), профиля нет.
+        """
+        if state.repo is None and state.routing_candidates:
+            return None
         return self._repos.get(state.repo) if state.repo is not None else self._repos.default
 
-    def _repo_for_new_ticket(self, ticket_id: str) -> RepoProfile | None:
-        """Профиль нового тикета по правилам или `--repo`."""
+    def _candidates_for_new_ticket(self, ticket_id: str) -> Candidates:
+        """Репозитории нового тикета по правилам или `--repo`; несколько — на классификацию."""
         try:
             ticket = load_ticket(self._tickets.path(ticket_id, "inbox"))
         except (TicketError, OSError):
-            return self._repos.default  # некорректный тикет отклонит `_execute`
-        return self._repos.select(ticket, self._repo_override)
+            default = self._repos.default  # некорректный тикет отклонит `_execute`
+            return Candidates((default,) if default else (), "default")
+        found = self._repos.candidates(ticket, self._repo_override)
+        if len(found.profiles) > 1 and not any(s.name == ROUTING for s in self._stages):
+            # поток без классификатора (свой набор этапов): прежнее поведение, отказ
+            raise RepoSelectionError(found.refusal or "Тикету подходит несколько репозиториев")
+        return found
+
+    def _select_repo(self, ctx: StageContext, profile: RepoProfile, source: str) -> None:
+        """Выбор профиля этапом routing: чистое дерево, состояние, трасса (как при старте)."""
+        self._check_repo(profile)
+        ctx.repo = profile
+        ctx.state.repo = profile.name
+        self._states.save(ctx.state)  # выбор не должен пропасть, если процесс убьют сейчас
+        ctx.trace.event("repo_selected", repo=profile.name, source=source)
 
     def run(self, ticket_id: str) -> Folder:
         """Проводит тикет по этапам; возвращает итоговую папку (`done` или `needs-human`).
@@ -277,12 +305,14 @@ class Orchestrator:
         return self.run(ticket_id)
 
     def _clear_rework_artifacts(self, ticket_id: str) -> None:
-        """Новая подача тикета начинает без замечаний прошлых раундов: иначе устаревший
-        `rework-<n>.md` запустил бы доработку по чужим замечаниям."""
+        """Новая подача тикета начинает без замечаний прошлых раундов и без прежнего выбора
+        репозитория: иначе устаревший `rework-<n>.md` запустил бы доработку по чужим замечаниям,
+        а `routing.json` подставил бы выбор по старому тексту тикета."""
         run_dir = self._states.run_dir(ticket_id)
         for n in range(1, MAX_HUMAN_REWORKS + 1):
             (run_dir / rework_file(n)).unlink(missing_ok=True)
         (run_dir / HANDLED_FILE).unlink(missing_ok=True)
+        (run_dir / "routing.json").unlink(missing_ok=True)  # выбор репозитория прошлой подачи
 
     def _run_locked(self, ticket_id: str, folder: Folder) -> Folder:
         if folder == "inbox":
@@ -294,9 +324,13 @@ class Orchestrator:
             state = RunState(ticket_id=ticket_id)  # новая подача: старый прогон не переиспользуем
             trace = self._trace(ticket_id, state.trace_id)
             try:
-                repo = self._repo_for_new_ticket(ticket_id)
+                found = self._candidates_for_new_ticket(ticket_id)
+                repo = found.profiles[0] if len(found.profiles) == 1 else None
                 state.repo = repo.name if repo is not None else None
-                self._check_repo(repo)
+                if len(found.profiles) > 1:  # выберет этап routing; дерево проверит он же
+                    state.routing_candidates = [p.name for p in found.profiles]
+                else:
+                    self._check_repo(repo)
             except (StageFailed, RepoSelectionError) as e:
                 trace.event("ticket_not_taken", reason=e.reason)
                 self._tickets.add_comment(ticket_id, "inbox", "orchestrator", "not_taken", e.reason)
@@ -304,6 +338,13 @@ class Orchestrator:
             self._clear_rework_artifacts(ticket_id)  # замечания прошлой подачи к новой не относятся
             self._states.save(state)  # выбор профиля не должен пропасть, если процесс убьют сейчас
             self._tickets.move(ticket_id, "inbox", "in-progress")
+            if repo is not None:  # правило выбрало репозиторий: фиксируем, чем (аудит выбора)
+                atomic_write_text(
+                    self._states.run_dir(ticket_id) / "routing.json",
+                    Routing(
+                        repo=repo.name, confidence="high", source="rule", reason=found.source
+                    ).model_dump_json(indent=2),
+                )
         else:
             state = self._states.load(ticket_id) or RunState(ticket_id=ticket_id)
             trace = self._trace(ticket_id, state.trace_id)
@@ -368,8 +409,10 @@ class Orchestrator:
         # контекст создаётся до проверок тикета, чтобы и отказ на входе (injection, пропавший
         # профиль) попал в итоговый отчёт на доске
         repo_error: str | None = None
+        candidates: tuple[RepoProfile, ...] = ()
         try:
             repo = self._repo_of_run(state)
+            candidates = tuple(self._repos.get(name) for name in state.routing_candidates)
         except RepoSelectionError as e:  # профиль убрали из repos.yaml посреди работы над тикетом
             repo, repo_error = None, e.reason
         # лимит на тикет считается по накопленному рабочему времени, простои между запусками
@@ -388,7 +431,9 @@ class Orchestrator:
             ),
             self._masker.mask_text,
             repo,
+            candidates if repo is None else (),
         )
+        ctx.select_repo = lambda profile, source: self._select_repo(ctx, profile, source)
         ctx.run_dir.mkdir(parents=True, exist_ok=True)
         self._ctx = ctx
         try:
@@ -399,7 +444,8 @@ class Orchestrator:
         if repo_error is not None:
             trace.event("guardrail_blocked", guard="repo", reason=repo_error)
             return repo_error
-        trace.event("repo_selected", repo=repo.name if repo is not None else None)
+        if not ctx.candidates:  # иначе выбор сделает этап routing и сам напишет событие
+            trace.event("repo_selected", repo=repo.name if repo is not None else None)
         for stage in self._stages:
             if state.stage(stage.name).status == "done":
                 trace.event("stage_skipped", stage=stage.name)

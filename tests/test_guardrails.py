@@ -25,7 +25,7 @@ CONFIG = load_config(GUARDRAILS_FILE)
 # --- конфиг ---
 def test_config_values_match_plan() -> None:
     lim = CONFIG.limits
-    assert lim.max_steps == {"analyst": 10, "developer": 60, "reviewer": 30}
+    assert lim.max_steps == {"analyst": 10, "developer": 60, "reviewer": 30, "router": 3}
     assert lim.max_context_tokens == 128_000
     assert lim.ticket_timeout_seconds == 1800
     assert lim.model_retries == 3

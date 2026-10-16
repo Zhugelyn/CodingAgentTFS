@@ -9,7 +9,9 @@
 # Выбор репозитория для тикета (один раз при старте, результат пишется в runs/<id>/state.json):
 #   1. `ario run <id> --repo <имя>`;
 #   2. совпадение с match: префикс area path или тег тикета;
-#   3. иначе default. Если подходят сразу два репозитория, тикет не берётся в работу.
+#   3. иначе default (явный выбор оператора: классификатор для не подошедших тикетов не нужен).
+# Если ни одно правило не решило (подошли два репозитория и больше или ни одного, а default не
+# задан), выбор делает классификатор (роль router, ROUTER_MODEL): он читает description.
 board:
   url: https://tech.directum.ru/Portfolio   # адрес коллекции Azure DevOps Server, без проекта
   project: SmartInstruments
@@ -20,7 +22,7 @@ board:
   flow: ticket-flow.yaml                    # поток состояний по умолчанию, от папки этого файла
   work_item_types: [Bug]                    # по каким типам на старте проверяется поток состояний
 
-default: rx
+default: rx   # с несколькими репозиториями лучше убрать: тогда неопределённые тикеты решает классификатор
 repositories:
   rx:
     path: D:\Projects\master\RX      # относительный путь считается от папки этого файла
@@ -43,3 +45,10 @@ repositories:
     #   target_branch: master
     #   pat_env: RX_GIT_PAT
     #   draft: true
+  # Второй репозиторий: description нужен классификатору (S23), match помогает правилам.
+  # dsa:
+  #   path: D:\Projects\dsa
+  #   description: Сервис DSA: интеграция с внешними системами, клиентские библиотеки
+  #   base_branch: main
+  #   match:
+  #     tags: [dsa]

@@ -26,7 +26,7 @@ TFS (доска) ─ ario fetch / ario watch ─► tickets/inbox/<id>.md
 |---|---|
 | Команды | `cli.py` (run, watch, rework, fetch, resume, trace, eval, export-otel) |
 | Ядро потока | `orchestrator.py` (машина состояний), `pipeline.py` (порядок этапов), `stage_names.py`, `state.py` (`runs/<id>/state.json`), `store.py` (папки тикета), `watch.py` (опрос и очередь), `webhook.py` (приёмник вебхуков TFS, будит `watch`) |
-| Агенты | `agents/`: `analyst.py`, `developer.py`, `reviewer.py` (этапы), `backend.py` (цикл агента на OpenHands SDK), `readonly_tools.py` и `dev_tools.py` (инструменты), `prompts.py`, `spec.py` (AGENTS.md, навыки), `verdicts.py` (формат вердиктов) |
+| Агенты | `agents/`: `router.py` (выбор репозитория), `analyst.py`, `developer.py`, `reviewer.py` (этапы), `backend.py` (цикл агента на OpenHands SDK), `readonly_tools.py` и `dev_tools.py` (инструменты), `prompts.py`, `spec.py` (AGENTS.md, навыки), `verdicts.py` (формат вердиктов) |
 | Инструменты | `tools/`: `git.py` (без commit и push), `build.py`, `edit.py`, `proc.py` |
 | Репозитории и доска | `board.py` (файл доски `ARIO_BOARD`: доска TFS и её репозитории), `repos.py` (профили репозиториев: путь, ветки, сборка, знания, публикация, поток состояний), `branches.py` |
 | TFS и доска | `tfs/` (`client.py`, `convert.py`, `fetch.py`), `ticket.py` (формат тикета), `ticket_system.py` (запись на доску), `reporting.py` (состояния и комментарии) |

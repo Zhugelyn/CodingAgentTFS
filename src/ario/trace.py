@@ -26,7 +26,7 @@ EVENT_KINDS: dict[str, str] = {
     "run_reopened": "тикет возвращён из needs-human командой resume",
     "run_finished": "прогон завершён (outcome, reason, total_seconds)",
     "ticket_invalid": "файл тикета не разобран",
-    "repo_selected": "для тикета выбран профиль репозитория (repo)",
+    "repo_selected": "для тикета выбран профиль репозитория (repo, source: правило или model)",
     "rework_requested": "запрошена доработка по замечаниям человека (round, chars)",
     "pr_replaced": "прежний PR не активен (закрыт или отменён): открывается новый (previous_pr)",
     "pr_comment_failed": "ответ в PR после доработки не записан; этап продолжен (reason)",
@@ -55,6 +55,7 @@ EVENT_KINDS: dict[str, str] = {
     "error_nudge": "инструмент не удался 2 раза подряд: агенту дана подсказка (tool, streak)",
     "limit_wrap_up": "лимит шагов исчерпан: агенту дан короткий финальный запрос на итоговый ответ",
     # результаты этапов
+    "routing_verdict": "вердикт классификатора репозитория (repo, confidence, reason)",
     "analysis_verdict": "вердикт analyst",
     "review_verdict": "вердикт reviewer",
     "branch_created": "создана ветка ai/<id>",

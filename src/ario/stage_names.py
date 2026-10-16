@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+ROUTING = "routing"  # выбор репозитория тикета (S23): перед analyst
 ANALYSIS = "analysis"
 DEVELOPMENT = "development"
 REVIEW = "review"

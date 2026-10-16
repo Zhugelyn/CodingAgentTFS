@@ -88,6 +88,44 @@ def parse_analysis(text: str) -> Analysis:
     return _parse_model(text, Analysis)
 
 
+UNKNOWN_REPO = "unknown"  # классификатор не смог определить репозиторий
+
+
+class Routing(BaseModel):
+    """Вердикт классификатора репозитория (`routing.json`, S23)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    repo: str = Field(min_length=1)  # имя репозитория из списка кандидатов или `unknown`
+    confidence: Literal["high", "medium", "low"]
+    reason: str = ""
+    source: Literal["model", "rule"] = "model"  # кто выбрал: модель или правило (override, match)
+    candidates: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_reason(self) -> Routing:
+        if self.source == "model" and not self.reason.strip():
+            raise ValueError("нужна непустая reason: почему выбран этот репозиторий")
+        return self
+
+    @property
+    def decided(self) -> bool:
+        """Выбор можно принять: репозиторий назван и уверенность не низкая."""
+        return self.repo != UNKNOWN_REPO and self.confidence != "low"
+
+
+def parse_routing(text: str) -> Routing:
+    return _parse_model(text, Routing)
+
+
+def load_routing(path: Path) -> Routing | None:
+    """Читает `routing.json`; нет файла или он повреждён — `None` (выбор будет сделан заново)."""
+    try:
+        return Routing.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 _DECISION_TITLES = {
     "suitable": "Подходит для автоматической разработки",
     "unsuitable": "Не подходит для автоматической разработки",

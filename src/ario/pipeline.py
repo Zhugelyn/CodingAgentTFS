@@ -1,4 +1,4 @@
-"""Поток тикета (схема B): analyst → developer → reviewer (до одной доработки) → publish."""
+"""Поток тикета: [routing] → analyst → developer → reviewer (до одной доработки) → publish."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from ario.agents.analyst import make_analyst_stage
 from ario.agents.backend import AgentBackend
 from ario.agents.developer import make_developer_stage
 from ario.agents.reviewer import make_reviewer_stage, review_verdict
+from ario.agents.router import make_router_stage
 from ario.orchestrator import Stage, StageContext
 from ario.publish import make_publish_stage, should_publish
 from ario.stage_names import MAX_HUMAN_REWORKS, development_stage, human_attempt, rework_file
@@ -45,6 +46,8 @@ def build_pipeline(backend: AgentBackend, runner: Runner = run_process) -> list[
         ]
 
     return [
+        # выбор репозитория, когда правил не хватило и кандидатов несколько (S23)
+        make_router_stage(backend),
         make_analyst_stage(backend, runner),
         make_developer_stage(backend, attempt=1, runner=runner),
         make_reviewer_stage(backend, attempt=1, runner=runner),

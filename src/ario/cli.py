@@ -32,6 +32,9 @@ if TYPE_CHECKING:
     from ario.watch import SeenLedger
 
 
+_MODEL_COMMANDS = ("run", "resume", "eval", "watch", "rework", "route")  # вызывают модель
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ario")
     parser.add_argument("--env-file", type=Path, default=None, help="путь к .env")
@@ -81,6 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
     rework.add_argument(
         "--dry-run", action="store_true", help="показать замечания и выйти, ничего не запуская"
     )
+    route = sub.add_parser(
+        "route",
+        help="показать, какой репозиторий выберет оркестратор для тикета (ничего не запускает)",
+    )
+    route.add_argument("ticket_id")
+    route.add_argument("--repo", default=None, help="проверить выбор с явным профилем")
     resume = sub.add_parser("resume", help="возобновить тикет из needs-human с упавшего этапа")
     resume.add_argument("ticket_id")
     ev = sub.add_parser("eval", help="прогнать набор тикетов с ожидаемыми исходами и метриками")
@@ -271,6 +280,74 @@ def _watch_dry_run(settings: Settings, store: TicketStore, ledger: SeenLedger) -
         f"{', '.join(queue) if queue else 'пусто'}. Ничего не записано и не запущено."
     )
     return 0
+
+
+def _route(settings: Settings, args: argparse.Namespace) -> int:
+    """Показывает выбор репозитория для тикета: правила, а при нескольких кандидатах классификатор.
+
+    Тикет не двигается и не запускается. Классификатор пишет только в служебные
+    `runs/_route/<id>/` и `traces/_route-<id>/`.
+    """
+    from ario.agents.router import classify
+    from ario.orchestrator import StageContext
+    from ario.repos import RepoRegistry, RepoSelectionError
+    from ario.state import RunState
+    from ario.ticket import TicketError, load_ticket
+    from ario.trace import TraceWriter
+
+    store = TicketStore(settings.tickets_dir)
+    try:
+        folder = store.locate(args.ticket_id)
+        ticket = load_ticket(store.path(args.ticket_id, folder))
+        found = RepoRegistry.from_settings(settings).candidates(ticket, args.repo)
+    except (TicketNotFoundError, InvalidTicketIdError, TicketError, ConfigError) as e:
+        print(f"Ошибка: {e}", file=sys.stderr)
+        return 2
+    except RepoSelectionError as e:
+        print(f"Ошибка: {e.reason}", file=sys.stderr)
+        return 2
+    names = ", ".join(p.name for p in found.profiles) or "нет"
+    if len(found.profiles) <= 1:
+        print(
+            f"Тикет {ticket.id} ({folder}/): репозиторий {names}, выбрано правилом {found.source}"
+        )
+        return 0 if found.profiles else 1
+    print(
+        f"Тикет {ticket.id} ({folder}/): кандидаты {names} ({found.source}), запускаю классификатор"
+    )
+    guardrails = Guardrails.load(settings.guardrails_path)
+    masker = Masker.from_environment(
+        os.environ,
+        guardrails.config.env,
+        [settings.openrouter_api_key, settings.tfs_pat, settings.tfs_write_pat],
+    )
+    backend = OpenHandsBackend(
+        settings.llm_model, settings.openrouter_api_key, role_models=settings.role_models
+    )
+    run_dir = settings.runs_dir / "_route" / ticket.id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    state = RunState(ticket_id=ticket.id)
+    ctx = StageContext(
+        ticket,
+        state,
+        run_dir,
+        TraceWriter(settings.traces_dir, f"_route-{ticket.id}", state.trace_id, masker),
+        settings,
+        guardrails,
+        guardrails.deadline(),
+        lambda agent, verdict, text: None,
+        masker.mask_text,
+    )
+    _use_system_certificates()
+    try:
+        routing = classify(backend, ctx, found.profiles)
+    except StageFailed as e:
+        print(f"Классификатор не дал ответа: {masker.mask_text(e.reason)}", file=sys.stderr)
+        return 2
+    print(
+        f"Классификатор: {routing.repo} ({routing.confidence}): {masker.mask_text(routing.reason)}"
+    )
+    return 0 if routing.decided else 1
 
 
 def _build_orchestrator(
@@ -640,13 +717,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as e:
         print(f"Ошибка настройки: {e}", file=sys.stderr)
         return 2
-    if args.command in ("run", "resume", "eval", "watch", "rework"):
+    if args.command in _MODEL_COMMANDS:
         try:
             check_sdk_telemetry(os.environ)  # SDK не должен слать тексты запросов наружу
         except ConfigError as e:
             print(f"Ошибка настройки: {e}", file=sys.stderr)
             return 2
-    uses_model = args.command in ("run", "resume", "eval", "watch", "rework") and not getattr(
+    uses_model = args.command in _MODEL_COMMANDS and not getattr(
         args, "dry_run", False
     )  # `watch --dry-run` модель не вызывает: выгрузка запросов ему не нужна
     llm_content = uses_model and settings.otlp_llm_content
@@ -662,6 +739,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _watch(settings, args)
     if args.command == "rework":
         return _rework(settings, args)
+    if args.command == "route":
+        return _route(settings, args)
     if args.command == "export-otel":
         return _export_otel(settings, args)
     try:

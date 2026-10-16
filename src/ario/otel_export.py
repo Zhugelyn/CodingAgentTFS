@@ -280,7 +280,10 @@ def _parse(events: Sequence[Event]) -> list[_Run]:
 
 def _stage_result(stage: _Stage, kind: str, data: Event) -> None:
     """Итоги этапов: только числа и короткие признаки, без текста."""
-    if kind == "analysis_verdict":
+    if kind == "routing_verdict":
+        stage.attrs["ario.routing.repo"] = _label(data.get("repo") or "")
+        stage.attrs["ario.routing.confidence"] = _label(data.get("confidence") or "")
+    elif kind == "analysis_verdict":
         stage.attrs["ario.analysis.decision"] = _label(data.get("decision") or "")
         stage.attrs["ario.analysis.risk"] = _label(data.get("risk") or "")
     elif kind == "review_verdict":

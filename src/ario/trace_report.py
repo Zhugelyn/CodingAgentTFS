@@ -157,6 +157,11 @@ def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
         elif kind == "build_output":
             ok = "успешна" if data.get("ok") else f"не удалась, ошибок: {data.get('errors')}"
             st.notes.append(f"сборка {ok}")
+        elif kind == "routing_verdict":
+            st.notes.append(
+                f"репозиторий: {data.get('repo')} ({data.get('confidence')}): "
+                f"{_short(data.get('reason'), 110)}"
+            )
         elif kind == "analysis_verdict":
             st.notes.append(f"вердикт analyst: {data.get('decision')}, риск {data.get('risk')}")
         elif kind == "review_verdict":
@@ -288,6 +293,11 @@ def render_steps(events: list[Event], stage: str | None = None, *, full: bool = 
             lines.append(f"{clock} [{where}] доска: {_board_line(data)}")
         elif kind == "published":
             lines.append(f"{clock} [{where}] push и PR: {data.get('pr_url')}")
+        elif kind == "routing_verdict":
+            lines.append(
+                f"{clock} [{where}] репозиторий {data.get('repo')} ({data.get('confidence')}): "
+                f"{_short(data.get('reason'), 200)}"
+            )
         elif kind == "observer_failed":
             lines.append(
                 f"{clock} [{where}] сбой отчёта на доске: {_short(data.get('reason'), 200)}"

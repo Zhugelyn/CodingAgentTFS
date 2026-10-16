@@ -29,6 +29,8 @@ class RunState(BaseModel):
     active_seconds: float = 0.0  # накопленное время работы над тикетом без простоев между запусками
     reason: str | None = None
     repo: str | None = None  # профиль репозитория, выбранный при старте тикета (S15)
+    # репозитории на классификацию (S23): заполнено, пока этап routing не выбрал профиль
+    routing_candidates: list[str] = Field(default_factory=list)
     stages: dict[str, StageState] = Field(default_factory=dict)
 
     def stage(self, name: str) -> StageState:

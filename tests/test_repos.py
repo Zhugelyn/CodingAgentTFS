@@ -94,39 +94,54 @@ def registry(tmp_path: Path) -> RepoRegistry:
     return RepoRegistry.load(write_repos(tmp_path), tmp_path)
 
 
-def test_select_by_area_path_prefix_and_tag(registry: RepoRegistry) -> None:
-    assert registry.select(ticket("SmartInstruments\\Antares")).name == "rx"  # type: ignore[union-attr]
-    assert registry.select(ticket("smartinstruments\\antares\\Sub")).name == "rx"  # type: ignore[union-attr]
-    assert registry.select(ticket("SmartInstruments\\Web\\Ui")).name == "web"  # type: ignore[union-attr]
-    assert registry.select(ticket("Other", tags=["Web-UI"])).name == "web"  # type: ignore[union-attr]
+def names(registry: RepoRegistry, ticket_: Ticket, override: str | None = None) -> list[str]:
+    return [p.name for p in registry.candidates(ticket_, override).profiles]
+
+
+def test_candidates_by_area_path_prefix_and_tag(registry: RepoRegistry) -> None:
+    assert names(registry, ticket("SmartInstruments\\Antares")) == ["rx"]
+    assert names(registry, ticket("smartinstruments\\antares\\Sub")) == ["rx"]
+    assert names(registry, ticket("SmartInstruments\\Web\\Ui")) == ["web"]
+    assert names(registry, ticket("Other", tags=["Web-UI"])) == ["web"]
+    assert registry.candidates(ticket("SmartInstruments\\Antares")).source == "match"
 
 
 def test_area_prefix_must_end_on_a_path_segment(registry: RepoRegistry) -> None:
-    other = registry.select(ticket("SmartInstruments\\Antares2"))  # не Antares: идёт default
-    assert other is registry.default
+    other = registry.candidates(ticket("SmartInstruments\\Antares2"))  # не Antares: идёт default
+    assert other.profiles == (registry.default,) and other.source == "default"
 
 
-def test_no_match_goes_to_default_and_without_default_is_refused(tmp_path: Path) -> None:
+def test_no_match_without_default_goes_to_classification(tmp_path: Path) -> None:
     registry = RepoRegistry.load(write_repos(tmp_path), tmp_path)
-    assert registry.select(ticket("Elsewhere")) is registry.default
-    no_default = RepoRegistry({"a": registry.get("web")})
-    with pytest.raises(RepoSelectionError, match="default не задан"):
-        no_default.select(ticket("Elsewhere"))
+    no_default = RepoRegistry({"a": registry.get("web"), "b": registry.get("rx")})
+    found = no_default.candidates(ticket("Elsewhere"))
+    assert [p.name for p in found.profiles] == ["web", "rx"] and found.source == "unmatched"
+    assert "default не задан" in found.refusal
 
 
-def test_ambiguous_match_is_refused(registry: RepoRegistry) -> None:
-    with pytest.raises(RepoSelectionError, match="rx, web"):
-        registry.select(ticket("SmartInstruments\\Antares", tags=["web-ui"]))
+def test_ambiguous_match_goes_to_classification_among_the_matches(
+    registry: RepoRegistry,
+) -> None:
+    found = registry.candidates(ticket("SmartInstruments\\Antares", tags=["web-ui"]))
+    assert [p.name for p in found.profiles] == ["rx", "web"] and found.source == "ambiguous"
+    assert "rx, web" in found.refusal
 
 
 def test_override_wins_and_unknown_override_is_refused(registry: RepoRegistry) -> None:
-    assert registry.select(ticket("SmartInstruments\\Antares"), override="web").name == "web"  # type: ignore[union-attr]
+    found = registry.candidates(ticket("SmartInstruments\\Antares"), override="web")
+    assert [p.name for p in found.profiles] == ["web"] and found.source == "override"
     with pytest.raises(RepoSelectionError, match="не описан"):
-        registry.select(ticket(), override="нет")
+        registry.candidates(ticket(), override="нет")
+
+
+def test_a_single_repository_needs_no_rules(tmp_path: Path) -> None:
+    only = RepoRegistry({"a": RepoRegistry.load(write_repos(tmp_path), tmp_path).get("web")})
+    found = only.candidates(ticket("Anywhere"))
+    assert [p.name for p in found.profiles] == ["web"] and found.source == "single"
 
 
 def test_empty_registry_selects_nothing() -> None:
-    assert RepoRegistry({}).select(ticket()) is None
+    assert RepoRegistry({}).candidates(ticket()).profiles == ()
 
 
 # --- профиль из .env ------------------------------------------------------------------------------
@@ -147,11 +162,11 @@ def test_without_repos_file_profile_rx_comes_from_settings(settings: Settings) -
     )
     assert profile.build_command == ("do.bat", "dirx", "build")
     assert profile.knowledge_dir == legacy.project_dir
-    assert registry.select(ticket("Anything")) is profile  # единственный профиль — по умолчанию
+    assert registry.candidates(ticket("Anything")).profiles == (profile,)  # единственный
 
 
 def test_no_rx_path_and_no_repos_file_means_no_repo(settings: Settings) -> None:
-    assert RepoRegistry.from_settings(settings).select(ticket()) is None
+    assert RepoRegistry.from_settings(settings).candidates(ticket()).profiles == ()
 
 
 def test_repos_file_takes_precedence_over_env(settings: Settings, tmp_path: Path) -> None:

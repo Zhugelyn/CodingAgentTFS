@@ -41,6 +41,7 @@ _SETTING_NAMES = frozenset(
         "ANALYST_MODEL",
         "DEVELOPER_MODEL",
         "REVIEWER_MODEL",
+        "ROUTER_MODEL",
         "OPENROUTER_API_KEY",
         "GIT_PAT",
     }

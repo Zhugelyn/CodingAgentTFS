@@ -31,6 +31,15 @@ class RepoSelectionError(Exception):
 
 
 @dataclass(frozen=True)
+class Candidates:
+    """Репозитории, подходящие тикету, и чем это определено (`source`)."""
+
+    profiles: tuple[RepoProfile, ...]
+    source: str  # override | single | match | default | ambiguous | unmatched | none
+    refusal: str = ""  # почему тикет нельзя взять без классификации (ambiguous, unmatched)
+
+
+@dataclass(frozen=True)
 class PublishConfig:
     """Куда оркестратор отправляет ветку тикета и где открывает PR (S17)."""
 
@@ -201,31 +210,42 @@ class RepoRegistry:
                 f"Репозиторий {name} не описан в профилях (есть: {known})"
             ) from None
 
-    def select(self, ticket: Ticket, override: str | None = None) -> RepoProfile | None:
-        """Профиль для тикета; `None`, если профилей нет вообще (репозиторий не настроен)."""
+    def candidates(self, ticket: Ticket, override: str | None = None) -> Candidates:
+        """Репозитории, из которых тикету подходят: один — выбор готов, несколько — нужна
+        классификация (S23), ни одного — репозиторий не настроен.
+
+        Порядок: `--repo` → единственный репозиторий → однозначное совпадение `match` → `default`
+        для не подошедших → иначе несколько совпавших или все репозитории на классификацию.
+        """
         if override:
-            return self.get(override)
+            return Candidates((self.get(override),), "override")
         if not self._profiles:
-            return None
+            return Candidates((), "none")
+        if len(self._profiles) == 1:
+            return Candidates((next(iter(self._profiles.values())),), "single")
         tags = {t.strip().lower() for t in ticket.tags}
-        matches = [
+        matches = tuple(
             p
             for p in self._profiles.values()
             if _prefix_match(ticket.area, p.area_paths) or tags & {t.lower() for t in p.tags}
-        ]
+        )
+        if len(matches) == 1:
+            return Candidates(matches, "match")
         if len(matches) > 1:
             names = ", ".join(p.name for p in matches)
-            raise RepoSelectionError(
+            return Candidates(
+                matches,
+                "ambiguous",
                 f"Тикет подходит сразу к нескольким репозиториям ({names}): уточните правила "
-                "match в repos.yaml или укажите --repo"
+                "match в конфигурации или укажите --repo",
             )
-        if matches:
-            return matches[0]
-        if self.default is not None:
-            return self.default
-        raise RepoSelectionError(
+        if self.default is not None:  # явный выбор оператора: классификация не нужна
+            return Candidates((self.default,), "default")
+        return Candidates(
+            tuple(self._profiles.values()),
+            "unmatched",
             "Тикет не подошёл ни к одному репозиторию и default не задан: "
-            f"area path={ticket.area!r}, теги={ticket.tags}"
+            f"area path={ticket.area!r}, теги={ticket.tags}",
         )
 
     @classmethod

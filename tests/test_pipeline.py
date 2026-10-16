@@ -108,6 +108,7 @@ def test_approve_on_first_review_skips_rework(pipe_settings: Settings, repo: Pat
     assert run_pipeline(pipe_settings, backend) == "done"
 
     assert stage_statuses(pipe_settings) == {
+        "routing": "skipped",  # репозиторий выбран правилами: классификация не нужна
         "analysis": "done",
         "development": "done",
         "review": "done",
@@ -147,6 +148,7 @@ def test_reject_then_rework_then_approve(pipe_settings: Settings, repo: Path) ->
     assert run_pipeline(pipe_settings, backend) == "done"
 
     assert stage_statuses(pipe_settings) == {
+        "routing": "skipped",
         "analysis": "done",
         "development": "done",
         "review": "done",

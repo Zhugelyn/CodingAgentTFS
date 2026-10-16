@@ -574,6 +574,7 @@ def test_stage_names_of_the_pipeline_match_the_names_the_reporter_listens_to() -
 
     names = [s.name for s in build_pipeline(Unused())]
     assert names == [
+        "routing",
         "analysis",
         "development",
         "review",

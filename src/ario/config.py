@@ -64,7 +64,8 @@ def check_sdk_telemetry(environ: Mapping[str, str]) -> None:
         )
 
 
-ROLES = ("analyst", "developer", "reviewer")  # ANALYST_MODEL, DEVELOPER_MODEL, REVIEWER_MODEL
+# ANALYST_MODEL, DEVELOPER_MODEL, REVIEWER_MODEL, ROUTER_MODEL (выбор репозитория, S23)
+ROLES = ("analyst", "developer", "reviewer", "router")
 
 
 def _positive_int(name: str, raw: str | None, default: int) -> int:

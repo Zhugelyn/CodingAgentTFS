@@ -9,6 +9,7 @@
 Ожидания в `expected.yaml` (все ключи необязательны):
   outcome: done | needs-human          итог тикета
   analysis: suitable | unsuitable | needs_info   решение analyst
+  repo: <имя профиля>                  выбранный репозиторий (правило или классификатор)
   review: approve | reject             итоговый вердикт reviewer
   build_ok: true | false               последняя сборка успешна
   edited: true | false                 были ли правки файлов
@@ -68,6 +69,7 @@ class CaseResult:
     llm_retries: int = 0
     tool_errors: int = 0
     analysis: str | None = None
+    repo: str | None = None
     reviews: list[str] = field(default_factory=list)
     build_ok: bool | None = None
     files_edited: list[str] = field(default_factory=list)
@@ -123,6 +125,8 @@ def collect(case_id: str, outcome: str, reason: str | None, data_dir: Path) -> C
         result.tool_errors = sum(1 for e in events if e["kind"] == "agent_error")
         builds = [e["data"].get("ok") for e in events if e["kind"] == "build_output"]
         result.build_ok = bool(builds[-1]) if builds else None
+    state = _read_json(run_dir / "state.json")
+    result.repo = str(state["repo"]) if state and state.get("repo") else None
     analysis = _read_json(run_dir / "analysis.json")
     result.analysis = str(analysis["decision"]) if analysis and "decision" in analysis else None
     for n in (1, 2):
@@ -146,6 +150,8 @@ def evaluate(result: CaseResult, expected: Expectation) -> list[Check]:
 
     if "outcome" in expected:
         add("итог", expected["outcome"], result.outcome)
+    if "repo" in expected:
+        add("репозиторий", expected["repo"], result.repo)
     if "analysis" in expected:
         add("решение analyst", expected["analysis"], result.analysis)
     if "review" in expected:
