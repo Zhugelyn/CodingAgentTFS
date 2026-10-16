@@ -291,12 +291,11 @@ def _build_orchestrator(
         guardrails.config.env,
         [settings.openrouter_api_key, settings.tfs_pat, settings.tfs_write_pat],
     )
+    reporter = build_reporter(settings, masker.mask_text)
+    for problem in reporter.problems(settings.work_item_types):
+        print(f"Предупреждение: поток состояний: {problem}", file=sys.stderr)
     orchestrator = Orchestrator(
-        settings,
-        stages,
-        guardrails,
-        repo_override=repo_override,
-        observer=build_reporter(settings, masker.mask_text),
+        settings, stages, guardrails, repo_override=repo_override, observer=reporter
     )
     return orchestrator, masker
 

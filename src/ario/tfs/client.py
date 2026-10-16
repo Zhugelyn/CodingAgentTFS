@@ -175,8 +175,11 @@ class TfsClient:
             {"fields": BRIEF_FIELDS, "api-version": API_VERSION},
         )
 
-    def type_states(self, item_type: str) -> list[str]:
-        """Имена состояний типа work item (для проверки карты «этап → состояние»)."""
+    def type_state_categories(self, item_type: str) -> dict[str, str]:
+        """Состояния типа work item: имя → категория TFS (Proposed, InProgress, Resolved, ...).
+
+        Порядок как на сервере. Категория пустая, если сервер её не вернул.
+        """
         self._require("board", "чтение состояний")
         data = self._request(
             "GET",
@@ -186,7 +189,15 @@ class TfsClient:
         items = data.get("value")
         if not isinstance(items, list):
             raise TfsError("Ответ состояний без списка value")
-        return [str(i["name"]) for i in items if isinstance(i, dict) and i.get("name")]
+        return {
+            str(i["name"]): str(i.get("category") or "")
+            for i in items
+            if isinstance(i, dict) and i.get("name")
+        }
+
+    def type_states(self, item_type: str) -> list[str]:
+        """Имена состояний типа work item (для проверки карты «этап → состояние»)."""
+        return list(self.type_state_categories(item_type))
 
     def add_comment(self, item_id: int, html: str) -> int:
         """Добавляет комментарий (HTML) и возвращает его id. Не повторяется при обрыве."""

@@ -128,6 +128,10 @@ class Settings:
     webhook_port: int = DEFAULT_WEBHOOK_PORT
     webhook_secret: str | None = field(default=None, repr=False)  # пароль Basic-авторизации
     tfs_max_items: int = DEFAULT_TFS_MAX_ITEMS  # сколько новых тикетов берёт один `ario fetch`
+    board_path: Path | None = (
+        None  # файл конфигурации доски (S22); задан: TFS_* и ARIO_REPOS не нужны
+    )
+    work_item_types: tuple[str, ...] = ("Bug",)  # типы тикетов, по которым проверяется поток
     otlp_llm_content: bool = False  # живая выгрузка текста запросов к модели (только локально)
     allow_remote_llm_content: bool = False  # осознанный обход ограничения «только localhost»
     otlp_endpoint: str | None = None  # OTLP/HTTP приёмник (Phoenix): автоэкспорт метрик прогона
@@ -149,8 +153,20 @@ class Settings:
     @classmethod
     def load(cls, env_file: Path | None = None) -> Settings:
         load_dotenv(env_file or find_dotenv(usecwd=True))
+        settings = cls._from_environment()
+        if settings.board_path is None:
+            return settings
+        if settings.repos_path is not None:
+            raise ConfigError("Заданы и ARIO_BOARD, и ARIO_REPOS: оставьте что-то одно")
+        from ario.board import BoardConfig  # board.py сам импортирует config
+
+        return BoardConfig.load(settings.board_path).apply(settings)
+
+    @classmethod
+    def _from_environment(cls) -> Settings:
         rx = os.environ.get("RX_PATH")
         return cls(
+            board_path=_optional_path(os.environ.get("ARIO_BOARD")),
             data_dir=Path(os.environ.get("ARIO_DATA_DIR") or ".").resolve(),
             rx_path=Path(rx) if rx else None,
             llm_model=os.environ.get("LLM_MODEL", "openrouter/qwen/qwen3.8-27b"),

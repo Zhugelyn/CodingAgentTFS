@@ -59,6 +59,8 @@ class RepoProfile:
     area_paths: tuple[str, ...] = ()  # префиксы area path, по которым выбирается профиль
     tags: tuple[str, ...] = ()  # теги тикета, по которым выбирается профиль
     publish: PublishConfig | None = None  # push и PR; без блока ветка остаётся локальной
+    flow_path: Path | None = None  # поток «этап → состояние доски» этого репозитория (S22)
+    description: str = ""  # для чего репозиторий: по нему тикет относят к репозиторию (S23)
 
 
 class _Match(BaseModel):
@@ -99,6 +101,8 @@ class _Repo(BaseModel):
     write_deny_extra: list[str] = Field(default_factory=list)
     match: _Match = Field(default_factory=_Match)
     publish: _Publish | None = None
+    flow: str | None = None  # файл потока состояний; пусто: поток доски
+    description: str = ""
 
     @field_validator("path")
     @classmethod
@@ -153,6 +157,8 @@ def _profile(name: str, raw: _Repo, base: Path, project_dir: Path) -> RepoProfil
         area_paths=tuple(raw.match.area_path),
         tags=tuple(raw.match.tags),
         publish=_publish(name, raw.publish, raw.base_branch),
+        flow_path=(base / raw.flow).resolve() if raw.flow else None,
+        description=raw.description.strip(),
     )
 
 
@@ -177,6 +183,10 @@ class RepoRegistry:
     @property
     def names(self) -> list[str]:
         return list(self._profiles)
+
+    @property
+    def profiles(self) -> list[RepoProfile]:
+        return list(self._profiles.values())
 
     @property
     def default(self) -> RepoProfile | None:
@@ -226,16 +236,29 @@ class RepoRegistry:
             parsed = _ReposFile.model_validate(data)
         except (OSError, yaml.YAMLError, ValidationError) as e:
             raise ConfigError(f"{path}: {e}") from e
+        return cls.from_repositories(parsed.repos, parsed.default, path.parent, project_dir)
+
+    @classmethod
+    def from_repositories(
+        cls,
+        repositories: Mapping[str, _Repo],
+        default: str | None,
+        base: Path,
+        project_dir: Path,
+    ) -> RepoRegistry:
+        """Реестр из разобранного блока репозиториев (`repos:` или `repositories:`)."""
         profiles = {
-            name: _profile(name, raw, path.parent, project_dir)
-            for name, raw in parsed.repos.items()
+            name: _profile(name, raw, base, project_dir) for name, raw in repositories.items()
         }
-        default = parsed.default or (next(iter(profiles)) if len(profiles) == 1 else None)
-        return cls(profiles, default)
+        return cls(profiles, default or (next(iter(profiles)) if len(profiles) == 1 else None))
 
     @classmethod
     def from_settings(cls, settings: Settings) -> RepoRegistry:
-        """`repos.yaml`, если он задан; иначе единственный профиль `rx` из настроек `.env`."""
+        """Файл доски или `repos.yaml`, если заданы; иначе профиль `rx` из настроек `.env`."""
+        if settings.board_path is not None:
+            from ario.board import BoardConfig
+
+            return BoardConfig.load(settings.board_path).registry(settings.project_dir)
         if settings.repos_path is not None:
             return cls.load(settings.repos_path, settings.project_dir)
         if settings.rx_path is None:

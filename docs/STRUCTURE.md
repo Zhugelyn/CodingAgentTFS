@@ -28,7 +28,7 @@ TFS (доска) ─ ario fetch / ario watch ─► tickets/inbox/<id>.md
 | Ядро потока | `orchestrator.py` (машина состояний), `pipeline.py` (порядок этапов), `stage_names.py`, `state.py` (`runs/<id>/state.json`), `store.py` (папки тикета), `watch.py` (опрос и очередь), `webhook.py` (приёмник вебхуков TFS, будит `watch`) |
 | Агенты | `agents/`: `analyst.py`, `developer.py`, `reviewer.py` (этапы), `backend.py` (цикл агента на OpenHands SDK), `readonly_tools.py` и `dev_tools.py` (инструменты), `prompts.py`, `spec.py` (AGENTS.md, навыки), `verdicts.py` (формат вердиктов) |
 | Инструменты | `tools/`: `git.py` (без commit и push), `build.py`, `edit.py`, `proc.py` |
-| Репозитории | `repos.py` (профили из `repos.yaml`: путь, ветки, сборка, знания, публикация), `branches.py` |
+| Репозитории и доска | `board.py` (файл доски `ARIO_BOARD`: доска TFS и её репозитории), `repos.py` (профили репозиториев: путь, ветки, сборка, знания, публикация, поток состояний), `branches.py` |
 | TFS и доска | `tfs/` (`client.py`, `convert.py`, `fetch.py`), `ticket.py` (формат тикета), `ticket_system.py` (запись на доску), `reporting.py` (состояния и комментарии) |
 | Публикация и доработка | `publish.py` (коммит, push без force, PR, ответ в PR), `pr_remarks.py` (замечания из обсуждения PR для `ario rework`) |
 | Защита | `guardrails/` (лимиты, пути, injection), `llm_guard.py` (предел на запрос к модели) |
@@ -52,7 +52,8 @@ TFS (доска) ─ ario fetch / ario watch ─► tickets/inbox/<id>.md
 |---|---|
 | `.env` (образец `config/.env.example`) | ключи, пути, модели по ролям, флаги `TFS_WRITE`, `ARIO_PUBLISH` |
 | `config/guardrails.yaml` | лимиты шагов, времени и контекста, запрещённые пути, правила injection |
-| `config/repos.yaml` (образец `.example`, путь в `ARIO_REPOS`) | профили репозиториев и публикация |
+| `config/board.yaml` (образец `.example`, путь в `ARIO_BOARD`) | доска TFS и её репозитории: настройки, публикация, поток состояний на репозиторий (код: `src/ario/board.py`) |
+| `config/repos.yaml` (образец `.example`, путь в `ARIO_REPOS`) | профили репозиториев и публикация (прежний вариант без файла доски) |
 | `config/ticket-flow.yaml` (образец `.example`, путь в `ARIO_TICKET_FLOW`) | какое состояние ставить на доске по ходу работы |
 
 ## Содержимое для агентов (не инструкции разработчику)

@@ -22,6 +22,7 @@ dist/
 # Данные прогонов
 /runs/
 /traces/
+/watch-seen.json
 /tickets/*/*
 !/tickets/*/.gitkeep
 

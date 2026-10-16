@@ -1,25 +1,29 @@
-# Поток «этап → состояние доски» (необязательно): путь в ARIO_TICKET_FLOW. Применяется только при
-# TFS_WRITE=1 и только к тикетам из TFS.
+# Поток «этап → состояние доски» (необязательно): путь в ARIO_TICKET_FLOW или в `flow` файла доски
+# (config/board.yaml.example: общий поток доски и свой поток каждого репозитория). Применяется
+# только при TFS_WRITE=1 и только к тикетам из TFS.
 #
 # Правило смены состояния: to - новое состояние, from - из каких текущих состояний его можно
-# ставить ("*" - из любого). Если человек уже передвинул карточку (состояние не из from), агент её
-# не трогает. Если состояния to нет у типа тикета, оно пропускается (событие в трассе).
-# Имена состояний взяты с доски Antares: New, Analysis, TechDesign, ReadyForDev, ToDo,
-# Development, Acceptance, ReadyForTesting.
+# ставить: имена состояний, "*" (из любого) и "category:<категория TFS>" (из любого состояния
+# категории: Proposed, InProgress, Resolved, Completed, Removed). Если человек уже передвинул
+# карточку (состояние не из from), агент её не трогает. Если состояния to нет у типа тикета, оно
+# пропускается (событие в трассе). `to` всегда имя: в категории несколько состояний.
+# Имена состояний с доски Antares (тип Bug) и их категории: New, Analysis, TechDesign, ReadyForDev,
+# ToDo (Proposed); Development (InProgress); Acceptance, ReadyForTesting, Testing, Finalizing
+# (Resolved); Closed (Completed). При старте поток сверяется с доской: опечатка видна сразу.
 states:
   analysis_started: {to: Analysis, from: [New]}            # старт analyst
   analysis_done: {to: ReadyForDev, from: [Analysis]}       # analyst закончил
   development_started: {to: Development, from: [ReadyForDev, ToDo]}  # старт developer
   # PR открыт (этап publish, нужны ARIO_PUBLISH=1 и блок publish в профиле репозитория):
-  pr_created: {to: ReadyForTesting, from: [Development]}
+  pr_created: {to: Acceptance, from: [Development]}
   # Доработка по замечаниям человека (ario rework): тикет возвращается в работу, а после нового
-  # push снова срабатывает pr_created.
-  rework_started: {to: Development, from: [ReadyForTesting, Acceptance]}
+  # push снова срабатывает pr_created. Категория Resolved охватывает и Testing, и Finalizing.
+  rework_started: {to: Development, from: [Acceptance, ReadyForTesting]}
   # review_approved (reviewer одобрил) ставит состояние раньше push и PR: нужен только если
-  # публикации нет, иначе тикет уйдёт тестировщикам, пока изменения лежат в локальной ветке.
-  # review_approved: {to: ReadyForTesting, from: [Development]}
+  # публикации нет, иначе тикет уйдёт дальше, пока изменения лежат в локальной ветке.
+  # review_approved: {to: Acceptance, from: [Development]}
 
-# Комментарии: «нужен человек» (с отметкой автора тикета) и «готово» (итог работы).
+# Комментарии: «нужен человек» (с отметкой автора тикета) и «готово» (итог работы со ссылкой на PR).
 comments:
   needs_human: true
   done: true

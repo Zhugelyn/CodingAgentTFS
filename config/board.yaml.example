@@ -1,0 +1,45 @@
+# Конфигурация доски (необязательно): путь в ARIO_BOARD. Одна доска на машину.
+# Файл описывает доску TFS (откуда берутся тикеты) и репозитории, которые она обслуживает: у каждого
+# репозитория свои настройки и свой поток состояний. Заменяет TFS_URL, TFS_PROJECT, TFS_WIQL,
+# TFS_MAX_ITEMS, ARIO_TICKET_FLOW и файл ARIO_REPOS: вместе с ARIO_BOARD задавать их нельзя
+# (ARIO_REPOS) или они игнорируются (остальные). Без ARIO_BOARD всё работает по-прежнему.
+# Токены в файле не хранятся, только имена переменных окружения из .env. Включатели записи
+# (TFS_WRITE, ARIO_PUBLISH) остаются в .env.
+#
+# Выбор репозитория для тикета (один раз при старте, результат пишется в runs/<id>/state.json):
+#   1. `ario run <id> --repo <имя>`;
+#   2. совпадение с match: префикс area path или тег тикета;
+#   3. иначе default. Если подходят сразу два репозитория, тикет не берётся в работу.
+board:
+  url: https://tech.directum.ru/Portfolio   # адрес коллекции Azure DevOps Server, без проекта
+  project: SmartInstruments
+  # query: "SELECT [System.Id] FROM WorkItems WHERE ..."   # WIQL отбора; пусто: Bug, тег «AI dev»
+  max_items: 5                              # новых тикетов за один `ario fetch`
+  pat_env: TFS_PAT                          # переменная с токеном чтения (Work Items: Read)
+  write_pat_env: TFS_WRITE_PAT              # переменная с токеном записи (Read & write)
+  flow: ticket-flow.yaml                    # поток состояний по умолчанию, от папки этого файла
+  work_item_types: [Bug]                    # по каким типам на старте проверяется поток состояний
+
+default: rx
+repositories:
+  rx:
+    path: D:\Projects\master\RX      # относительный путь считается от папки этого файла
+    description: Платформа Directum RX (Antares)    # для чего репозиторий (понадобится выбору по тексту)
+    flow: rx-flow.yaml               # свой поток состояний; пусто: поток доски
+    base_branch: master
+    branch_template: antares/ai-{id}
+    build_command: ""                # пусто: dotnet build проекта
+    knowledge_dir: .                 # AGENTS.md, agents/, skills/ репозитория; от ARIO_PROJECT_DIR
+    write_deny_extra: []             # правила запрета записи сверх config/guardrails.yaml
+    match:
+      area_path: ['SmartInstruments\Antares']
+      tags: []
+    # Push и PR оркестратором (необязательно; включается ещё и ARIO_PUBLISH=1), как в
+    # config/repos.yaml.example: сервер кода может отличаться от сервера доски.
+    # publish:
+    #   url: https://rxtfs.directum.ru/IS-Builder8
+    #   project: Sungero
+    #   repository: DirectumRX
+    #   target_branch: master
+    #   pat_env: RX_GIT_PAT
+    #   draft: true

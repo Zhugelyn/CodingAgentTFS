@@ -145,7 +145,13 @@ class FakeClient:
             "System.CreatedBy": {"displayName": "Галиева Э.", "id": "guid-1"},
         }
         self.rev = 9
-        self.states = ["New", "Analysis", "ReadyForDev", "Development"]
+        self.states = {
+            "New": "Proposed",
+            "Analysis": "Proposed",
+            "ReadyForDev": "Proposed",
+            "Development": "InProgress",
+            "Acceptance": "Resolved",
+        }
         self.comments: list[tuple[int, str]] = []
         self.state_calls: list[tuple[int, str, int]] = []
         self.type_calls = 0
@@ -154,7 +160,7 @@ class FakeClient:
     def work_item_brief(self, item_id: int) -> dict[str, Any]:
         return {"id": item_id, "rev": self.rev, "fields": self.fields}
 
-    def type_states(self, item_type: str) -> list[str]:
+    def type_state_categories(self, item_type: str) -> dict[str, str]:
         self.type_calls += 1
         return self.states
 

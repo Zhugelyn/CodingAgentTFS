@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import html
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -18,6 +19,9 @@ from ario.tfs.client import TfsConflictError, TfsError
 MAX_COMMENT_CHARS = 6000
 MAX_FAILURES = 2  # подряд сбоев записи, после которых доску до конца прогона не трогаем
 ANY_STATE = "*"  # в списке допустимых исходных состояний: менять из любого
+CATEGORY_PREFIX = "category:"  # в списке исходных состояний: любое состояние этой категории TFS
+_URL = re.compile(r"https?://[^\s<>\"']+")
+_URL_TAIL = ".,;:!?)]}"
 
 Status = Literal["done", "skipped", "failed"]
 
@@ -59,9 +63,24 @@ class NullTicketSystem:
         return WriteResult("skipped", self.reason)
 
 
+def _link(match: re.Match[str]) -> str:
+    url = match.group(0)
+    tail = ""
+    while url and url[-1] in _URL_TAIL:  # знак препинания после адреса в ссылку не входит
+        url, tail = url[:-1], url[-1] + tail
+    if url.count("/") < 2 or len(url) <= len("https://"):
+        return match.group(0)
+    return f'<a href="{url}">{url}</a>{tail}'
+
+
 def render_comment_html(text: str, mention: tuple[str, str] | None = None) -> str:
-    """Текст → HTML комментария TFS. Всё экранируется: текст может нести недоверенное."""
-    body = html.escape(text.strip()[:MAX_COMMENT_CHARS], quote=False).replace("\n", "<br>")
+    """Текст → HTML комментария TFS. Всё экранируется: текст может нести недоверенное.
+
+    Адреса http(s) после экранирования становятся ссылками: кавычек, скобок тегов и пробелов в
+    адресе нет, поэтому разметку из текста получить нельзя.
+    """
+    escaped = html.escape(text.strip()[:MAX_COMMENT_CHARS], quote=False)
+    body = _URL.sub(_link, escaped).replace("\n", "<br>")
     if mention is None:
         return body
     name, identity_id = mention
@@ -78,7 +97,7 @@ class TfsTicketSystem:
     def __init__(self, client: _Client, mask: Callable[[str], str] = lambda text: text) -> None:
         self._client = client
         self._mask = mask
-        self._states: dict[str, list[str]] = {}
+        self._states: dict[str, dict[str, str]] = {}
         self._failures = 0
 
     def comment(self, ticket_id: str, text: str, *, mention_author: bool = False) -> WriteResult:
@@ -88,6 +107,12 @@ class TfsTicketSystem:
         self, ticket_id: str, to_state: str, *, allowed_from: Sequence[str]
     ) -> WriteResult:
         return self._tracked(lambda: self._transition(ticket_id, to_state, allowed_from))
+
+    def state_categories(self, item_type: str) -> dict[str, str]:
+        """Состояния типа work item: имя → категория TFS (кэш на время работы)."""
+        if item_type not in self._states:
+            self._states[item_type] = self._client.type_state_categories(item_type)
+        return self._states[item_type]
 
     def _tracked(self, write: Callable[[], WriteResult]) -> WriteResult:
         """Недоступная доска не должна тормозить прогон: после серии сбоев запись прекращается."""
@@ -136,15 +161,22 @@ class TfsTicketSystem:
             current = str(fields.get("System.State", ""))
             if current == to_state:
                 return WriteResult("skipped", f"уже в состоянии {to_state}")
-            if ANY_STATE not in allowed_from and current not in allowed_from:
-                return WriteResult(
-                    "skipped", f"состояние {current!r} не из {list(allowed_from)}: человек опередил"
-                )
             item_type = str(fields.get("System.WorkItemType", ""))
-            known = self._type_states(item_type)
-            if to_state not in known:
+            states = self.state_categories(item_type)
+            if not _allowed(current, allowed_from, states):
+                hint = ""
+                if not states.get(current) and any(
+                    item.startswith(CATEGORY_PREFIX) for item in allowed_from
+                ):
+                    hint = " (категорию состояния сервер не вернул: укажите имена состояний)"
                 return WriteResult(
-                    "skipped", f"состояния {to_state!r} нет у типа {item_type!r}: есть {known}"
+                    "skipped",
+                    f"состояние {current!r} не из {list(allowed_from)}: человек опередил{hint}",
+                )
+            if to_state not in states:
+                return WriteResult(
+                    "skipped",
+                    f"состояния {to_state!r} нет у типа {item_type!r}: есть {list(states)}",
                 )
             rev = item.get("rev")
             if not isinstance(rev, int) or isinstance(rev, bool):
@@ -156,10 +188,19 @@ class TfsTicketSystem:
             return WriteResult("failed", self._mask(str(e)))
         return WriteResult("done", f"{current} → {to_state}")
 
-    def _type_states(self, item_type: str) -> list[str]:
-        if item_type not in self._states:
-            self._states[item_type] = self._client.type_states(item_type)
-        return self._states[item_type]
+
+def _allowed(current: str, allowed_from: Sequence[str], states: dict[str, str]) -> bool:
+    """Текущее состояние подходит: `*`, имя из списка или `category:<категория>` его категории."""
+    if ANY_STATE in allowed_from or current in allowed_from:
+        return True
+    category = states.get(current, "").casefold()
+    if not category:
+        return False
+    return any(
+        item.startswith(CATEGORY_PREFIX)
+        and item[len(CATEGORY_PREFIX) :].strip().casefold() == category
+        for item in allowed_from
+    )
 
 
 class _Client(Protocol):
@@ -167,7 +208,7 @@ class _Client(Protocol):
 
     def work_item_brief(self, item_id: int) -> dict[str, Any]: ...
 
-    def type_states(self, item_type: str) -> list[str]: ...
+    def type_state_categories(self, item_type: str) -> dict[str, str]: ...
 
     def add_comment(self, item_id: int, html: str) -> int: ...
 
