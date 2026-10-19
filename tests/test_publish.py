@@ -570,3 +570,28 @@ def test_push_goes_only_to_the_server_and_repository_from_the_profile(
     )
     outcome, api, settings = run_stage()
     assert outcome == "needs-human" and "push отменён" in reason(settings) and api.requests == []
+
+
+# --- секреты в публикуемых правках (S24) -------------------------------------------------------
+def test_staged_additions_lists_added_lines_per_file(world: dict[str, Path]) -> None:
+    (world["work"] / "B.cs").write_text("class B\n{\n    int Y;\n}\n", encoding="utf-8")
+    publish = publisher(world["work"])
+    publish.stage_all()
+    added = publish.staged_additions()
+    assert added["A.cs"] == "class A { int X = 2; }"
+    assert added["B.cs"].splitlines() == ["class B", "{", "    int Y;", "}"]
+
+
+def test_publish_stops_when_the_diff_contains_a_secret(
+    run_stage: Callable[..., tuple[str, Api, Settings]], world: dict[str, Path]
+) -> None:
+    (world["work"] / "A.cs").write_text(
+        'class A { const string Password = "Zq81nd04xk2"; }\n', encoding="utf-8"
+    )
+    outcome, api, settings = run_stage()
+    text = reason(settings)
+    assert outcome == "needs-human" and "секреты" in text and "A.cs" in text
+    assert "Zq81nd04xk2" not in text  # сам секрет в причину не попадает
+    assert api.requests == []  # ни push, ни PR
+    assert git(world["work"], "diff", "--cached", "--name-only").strip() == ""  # индекс очищен
+    assert "ai/43031" not in git(world["remote"], "branch", "--list")  # ветка не отправлена

@@ -100,6 +100,19 @@ class GitPublisher:
         names = self._git("diff", "--cached", "--name-only", "--relative", "-z")
         return [name for name in names.split("\0") if name]
 
+    def staged_additions(self) -> dict[str, str]:
+        """Добавленные в индекс строки по файлам (`git diff --cached -U0`): проверка секретов."""
+        diff = self._git("diff", "--cached", "--no-color", "-U0", "--no-ext-diff", "--relative")
+        found: dict[str, list[str]] = {}
+        current: str | None = None
+        for line in diff.splitlines():
+            if line.startswith("+++ "):
+                name = line[4:].strip()
+                current = name[2:] if name.startswith("b/") else None
+            elif line.startswith("+") and current is not None:
+                found.setdefault(current, []).append(line[1:])
+        return {name: "\n".join(lines) for name, lines in found.items()}
+
     def unstage(self) -> None:
         self._git("reset", "--quiet")
 
@@ -340,13 +353,22 @@ def _publish(
     )
     check_remote(publisher.remote_url(config.remote), config)  # до любых изменений в клоне
     staged = publisher.stage_all()
-    forbidden = _forbidden(staged, ctx.guardrails.path_guard(repo.path, repo.write_deny_extra))
+    forbidden = _forbidden(staged, ctx.guardrails.path_guard(repo.path, repo.rules))
     if forbidden:
         publisher.unstage()
         shown = ", ".join(forbidden[:10]) + (" и ещё" if len(forbidden) > 10 else "")
         raise StageFailed(
             f"В изменениях есть файлы, которые агенту менять и публиковать нельзя: {shown}. "
             "Это не его правки (сборка, чужие файлы): уберите их и запустите этап снова."
+        )
+    leaked = [name for name, text in publisher.staged_additions().items() if ctx.mask(text) != text]
+    if leaked:  # сам секрет в сообщение не попадает: только имена файлов
+        publisher.unstage()
+        ctx.trace.event("secret_blocked", stage=PUBLISH, where="publish", files=leaked[:10])
+        shown = ", ".join(leaked[:10]) + (" и ещё" if len(leaked) > 10 else "")
+        raise StageFailed(
+            f"В добавленных строках есть секреты (ключи, токены, пароли): {shown}. "
+            "Публикация остановлена: уберите их из правок и запустите этап снова."
         )
     committed = publisher.commit(neutralize_refs(ctx.mask(message)), author)
     if publisher.commits_ahead(repo.base_branch) == 0:

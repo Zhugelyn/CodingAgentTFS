@@ -94,6 +94,20 @@ class PathGuard:
             return False
         return _denied(rel, self._config.read_deny) is None
 
+    def visible(self, resolved: Path) -> bool:
+        """Попадает ли файл в результаты поиска: читаем и не скрыт правилом `hide`.
+
+        Скрытый файл остаётся доступным по явному пути (`check`), в `find_files` и `search_text`
+        его нет: сгенерированный код не засоряет выдачу и не тратит токены.
+        """
+        try:
+            rel = resolved.relative_to(self._root)
+        except ValueError:
+            return False
+        return (
+            _denied(rel, self._config.read_deny) is None and _denied(rel, self._config.hide) is None
+        )
+
 
 def clean_env(environ: Mapping[str, str], config: EnvConfig) -> dict[str, str]:
     """Копия окружения без переменных, похожих на секреты."""

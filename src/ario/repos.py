@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from ario.branches import DEFAULT_BRANCH_TEMPLATE, BranchTemplateError, validate_branch_template
 from ario.config import ConfigError, Settings, parse_command
+from ario.guardrails.config import FileRules
 from ario.ticket import Ticket
 
 LEGACY_PROFILE = "rx"  # имя профиля, собранного из `.env`
@@ -68,8 +69,18 @@ class RepoProfile:
     area_paths: tuple[str, ...] = ()  # префиксы area path, по которым выбирается профиль
     tags: tuple[str, ...] = ()  # теги тикета, по которым выбирается профиль
     publish: PublishConfig | None = None  # push и PR; без блока ветка остаётся локальной
+    files: FileRules = field(default_factory=FileRules)  # правила файлов репозитория (S24)
     flow_path: Path | None = None  # поток «этап → состояние доски» этого репозитория (S22)
     description: str = ""  # для чего репозиторий: по нему тикет относят к репозиторию (S23)
+
+    @property
+    def rules(self) -> FileRules:
+        """Правила файлов репозитория: прежний `write_deny_extra` и блок `files`."""
+        return FileRules(
+            write_deny=[*self.write_deny_extra, *self.files.write_deny],
+            read_deny=list(self.files.read_deny),
+            hide=list(self.files.hide),
+        )
 
 
 class _Match(BaseModel):
@@ -107,7 +118,8 @@ class _Repo(BaseModel):
     branch_template: str = DEFAULT_BRANCH_TEMPLATE
     build_command: str = ""
     knowledge_dir: str = "."
-    write_deny_extra: list[str] = Field(default_factory=list)
+    write_deny_extra: list[str] = Field(default_factory=list)  # прежний ключ, как files.write_deny
+    files: FileRules = Field(default_factory=FileRules)
     match: _Match = Field(default_factory=_Match)
     publish: _Publish | None = None
     flow: str | None = None  # файл потока состояний; пусто: поток доски
@@ -163,6 +175,7 @@ def _profile(name: str, raw: _Repo, base: Path, project_dir: Path) -> RepoProfil
         build_command=parse_command(raw.build_command),
         knowledge_dir=(project_dir / raw.knowledge_dir).resolve(),  # от ARIO_PROJECT_DIR
         write_deny_extra=tuple(raw.write_deny_extra),
+        files=raw.files,
         area_paths=tuple(raw.match.area_path),
         tags=tuple(raw.match.tags),
         publish=_publish(name, raw.publish, raw.base_branch),

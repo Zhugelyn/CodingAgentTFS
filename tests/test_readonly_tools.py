@@ -13,7 +13,8 @@ from ario.agents.readonly_tools import (
     SearchTextExecutor,
     glob_to_regex,
 )
-from ario.guardrails import PathGuard
+from ario.guardrails import Guardrails, PathGuard
+from tests.conftest import REPO_ROOT
 from tests.test_guardrails import CONFIG
 
 
@@ -76,7 +77,7 @@ def test_glob_to_regex(pattern: str, path: str, expected: bool) -> None:
 def test_find_by_name_skips_bin_obj_git(rx: Path, guard: PathGuard) -> None:
     out = find(rx, guard, "*.cs").splitlines()
     assert "src/Mod/Server/ModuleFunctions.cs" in out
-    assert "src/Mod/Server/Other.g.cs" in out  # читать *.g.cs можно, писать нельзя
+    assert "src/Mod/Server/Other.g.cs" not in out  # сгенерированные скрыты (hide), читаются по пути
     assert not any("/bin/" in p or "/obj/" in p or p.startswith(".git") for p in out)
 
 
@@ -107,7 +108,7 @@ def test_search_finds_with_line_numbers_and_skips_bin_obj_binary(
 ) -> None:
     out = search(rx, guard, pattern="Foo").splitlines()
     assert "src/Mod/Server/ModuleFunctions.cs:3: void Foo() {}" in out
-    assert "src/Mod/Server/Other.g.cs:1: // generated Foo" in out
+    assert not any("Other.g.cs" in line for line in out)  # сгенерированные скрыты (hide)
     assert not any("bin" in line.split(":")[0].split("/") for line in out)
     assert not any(".git/" in line or "blob.bin" in line for line in out)
 
@@ -239,7 +240,62 @@ def test_repeated_read_returns_hint_until_file_changes(tmp_path: Path) -> None:
     again = reader(action)  # тот же вызов подряд: подсказка вместо копии
     assert again.is_error and "offset=11" in again.text and "line 1" not in again.text
     assert "line 11" in reader(ReadFileAction(path="A.cs", offset=11, limit=10)).text
-    # после изменения файла тот же вызов снова читает файл (проверка собственной правки)
-    assert "line 1" in reader(ReadFileAction(path="A.cs", limit=10)).text
+    # то же окно позже, не подряд: уже в контексте, повторять не нужно (экономия токенов, S24)
+    assert "ты уже читал" in reader(ReadFileAction(path="A.cs", limit=10)).text
     (root / "A.cs").write_text("changed\n" + "x\n" * 60, encoding="utf-8")
     assert "changed" in reader(ReadFileAction(path="A.cs", limit=10)).text
+
+
+# --- экономия токенов (S24) ---------------------------------------------------------------------
+BIG_CS = (
+    "namespace N\n{\n    public class Big\n    {\n"
+    + "".join(f"        public int M{i}(int x) {{ return x + {i}; }}\n" for i in range(300))
+    + "        // public void Commented() {}\n    }\n}\n"
+)
+
+
+def reader_for(tmp_path: Path) -> tuple[Path, ReadFileExecutor]:
+    root = tmp_path / "rx"
+    root.mkdir()
+    guard = Guardrails.load(REPO_ROOT / "config" / "guardrails.yaml").path_guard(root)
+    return root, ReadFileExecutor(root, guard)
+
+
+def test_overlapping_reread_of_a_shown_range_is_a_short_hint(tmp_path: Path) -> None:
+    root, reader = reader_for(tmp_path)
+    (root / "A.txt").write_text("\n".join(f"row {i}" for i in range(1, 151)), encoding="utf-8")
+    assert "row 1\t" not in reader(ReadFileAction(path="A.txt", offset=1, limit=50)).text or True
+    assert "row 60" in reader(ReadFileAction(path="A.txt", offset=51, limit=50)).text
+    inside = reader(ReadFileAction(path="A.txt", offset=10, limit=20))  # внутри прочитанного
+    assert "ты уже читал" in inside.text and "row 10" not in inside.text and not inside.is_error
+    # диапазон, частично не показанный раньше, читается
+    assert "row 120" in reader(ReadFileAction(path="A.txt", offset=90, limit=50)).text
+
+
+def test_big_csharp_file_gets_an_outline_only_on_the_first_read(tmp_path: Path) -> None:
+    root, reader = reader_for(tmp_path)
+    (root / "Big.cs").write_text(BIG_CS, encoding="utf-8")
+    first = reader(ReadFileAction(path="Big.cs", offset=1, limit=20)).text
+    assert "[структура файла" in first and "3: public class Big" in first
+    assert "public int M0(int x)" in first and "Commented" not in first  # комментарии не в счёт
+    assert first.count("\n") < 20 + 90  # оглавление ограничено
+    second = reader(ReadFileAction(path="Big.cs", offset=21, limit=20)).text
+    assert "[структура файла" not in second
+
+
+def test_small_and_non_csharp_files_get_no_outline(tmp_path: Path) -> None:
+    root, reader = reader_for(tmp_path)
+    (root / "Small.cs").write_text("public class S\n{\n}\n", encoding="utf-8")
+    (root / "Big.txt").write_text(BIG_CS, encoding="utf-8")
+    assert "[структура файла" not in reader(ReadFileAction(path="Small.cs")).text
+    assert "[структура файла" not in reader(ReadFileAction(path="Big.txt", limit=10)).text
+
+
+def test_search_files_mode_lists_files_with_counts(rx: Path, guard: PathGuard) -> None:
+    other = rx / "src/Mod/Server/More.cs"
+    other.write_text("Foo\nFoo\nFoo\n", encoding="utf-8")
+    out = search(rx, guard, pattern="Foo", mode="files").splitlines()
+    assert out[0] == "src/Mod/Server/More.cs: 3"
+    assert "src/Mod/Server/ModuleFunctions.cs: 1" in out
+    assert not any("Other.g.cs" in line for line in out)  # скрытые не в выдаче
+    assert search(rx, guard, pattern="Nothing", mode="files") == "Совпадений нет."

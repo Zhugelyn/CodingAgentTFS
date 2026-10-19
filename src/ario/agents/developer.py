@@ -150,11 +150,17 @@ def make_developer_stage(
             scanner.check(feedback, "замечаниях к доработке")
 
         env = ctx.guardrails.config.env
-        guard = ctx.guardrails.path_guard(rx, repo.write_deny_extra)
+        guard = ctx.guardrails.path_guard(rx, repo.rules)
         git = GitRepo(rx, env, repo.base_branch, repo.branch_template, runner=runner)
         branch = _prepare_branch(git, ctx.ticket, attempt, ctx.trace, name)
         toolset = DeveloperToolset(
-            rx, guard, git, _make_builder(repo, guard, env, runner), ctx.trace, name
+            rx,
+            guard,
+            git,
+            _make_builder(repo, guard, env, runner),
+            ctx.trace,
+            name,
+            has_secret=lambda text: ctx.mask(text) != text,  # то же, что скрывает секреты в трассе
         )
         request = AgentRequest(
             role=ROLE,

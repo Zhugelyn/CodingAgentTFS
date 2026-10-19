@@ -7,12 +7,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from ario.guardrails.boundaries import PathGuard, clean_env
-from ario.guardrails.config import GuardrailsConfig, load_config
+from ario.guardrails.config import FileRules, GuardrailsConfig, load_config
 from ario.guardrails.injection import Finding, InjectionScanner
 from ario.guardrails.limits import Clock, Deadline, TokenBudget, call_with_retry, is_retryable
 
 __all__ = [
     "Deadline",
+    "FileRules",
     "Finding",
     "Guardrails",
     "GuardrailsConfig",
@@ -38,12 +39,23 @@ class Guardrails:
     def load(cls, path: Path) -> Guardrails:
         return cls(load_config(path))
 
-    def path_guard(self, root: Path, extra_write_deny: Sequence[str] = ()) -> PathGuard:
-        """Границы путей; `extra_write_deny` — правила профиля репозитория сверх общих."""
-        paths = self.config.paths
-        if extra_write_deny:
-            paths = paths.model_copy(update={"write_deny": [*paths.write_deny, *extra_write_deny]})
-        return PathGuard(root, paths)
+    def path_guard(self, root: Path, extra: FileRules | Sequence[str] = ()) -> PathGuard:
+        """Границы путей; `extra` — правила репозитория сверх общих (правила только добавляются).
+
+        Последовательность строк понимается как дополнительные запреты записи.
+        """
+        rules = FileRules(write_deny=list(extra)) if not isinstance(extra, FileRules) else extra
+        merged = self.config.paths.merged(rules)
+        return PathGuard(
+            root,
+            self.config.paths.model_copy(
+                update={
+                    "write_deny": merged.write_deny,
+                    "read_deny": merged.read_deny,
+                    "hide": merged.hide,
+                }
+            ),
+        )
 
     def deadline(self, elapsed: float = 0.0) -> Deadline:
         return Deadline(self.config.limits.ticket_timeout_seconds, self._clock, elapsed)

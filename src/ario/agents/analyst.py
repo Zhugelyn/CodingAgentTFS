@@ -80,7 +80,7 @@ def make_analyst_stage(backend: AgentBackend, runner: Runner = run_process) -> S
             raise StageFailed(f"Ошибка конфигурации агента {ROLE}: {e}") from e
 
         _checkout_base(ctx, repo, runner)
-        guard = ctx.guardrails.path_guard(repo.path, repo.write_deny_extra)
+        guard = ctx.guardrails.path_guard(repo.path, repo.rules)
         validate = _make_validator(guard)
         request = AgentRequest(
             role=ROLE,

@@ -35,6 +35,7 @@ EVENT_KINDS: dict[str, str] = {
     "ticket_system": "запись на доску (action: state|comment, on, status, detail, to)",
     "observer_failed": "наблюдатель за прогоном (отчёт на доске) дал сбой; прогон продолжен",
     "ticket_not_taken": "тикет не взят в работу (проверка перед стартом)",
+    "secret_blocked": "правка или публикация отклонены: в добавляемом тексте секрет (where, path)",
     "stage_started": "этап начат",
     "stage_finished": "этап завершён (seconds)",
     "stage_failed": "этап отказал (reason, seconds)",
@@ -74,7 +75,7 @@ MASK = "***"
 MIN_SECRET_LENGTH = 6  # короткие значения («1», «true») не маскируем: испортят трассу
 
 _PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"sk-[A-Za-z0-9_\-]{16,}"), MASK),
+    (re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_\-]{16,}"), MASK),  # не `risk-management-...`
     (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}"), r"\1" + MASK),
     # `password=значение`: маскируется только значение, похожее на секрет (не короче 8 знаков
     # и с цифрой). Так обычный код вроде `var token = CancellationToken.None;` не портится.
@@ -87,6 +88,9 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (re.compile(r"(://[^/\s:@]+:)[^@\s/]+(@)"), r"\1" + MASK + r"\2"),
 ]
+
+
+_PRIVATE_KEY = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 
 
 class Masker:
@@ -115,6 +119,10 @@ class Masker:
         for pattern, replacement in _PATTERNS:
             text = pattern.sub(replacement, text)
         return text
+
+    def contains_secret(self, text: str) -> bool:
+        """Есть ли в тексте секрет: известное значение, типичная форма или закрытый ключ."""
+        return self.mask_text(text) != text or _PRIVATE_KEY.search(text) is not None
 
     def mask(self, value: Any) -> Any:
         """Рекурсивно маскирует строки в словарях, списках и кортежах."""

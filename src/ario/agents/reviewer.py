@@ -82,7 +82,7 @@ def make_reviewer_stage(
         ctx.guardrails.scanner.check(diff, "diff изменений")  # InjectionDetected → needs-human
         ctx.guardrails.scanner.check(development_md, "отчёте developer")
 
-        guard = ctx.guardrails.path_guard(rx, repo.write_deny_extra)
+        guard = ctx.guardrails.path_guard(rx, repo.rules)
         request = AgentRequest(
             role=ROLE,
             root=rx,

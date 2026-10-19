@@ -329,3 +329,25 @@ def test_repeated_tool_errors_get_one_hint_and_success_resets_the_streak(
     assert "не удался 2 раза подряд" in texts[2]
     events = (tmp_path / "traces" / "1" / "events.jsonl").read_text(encoding="utf-8")
     assert events.count('"error_nudge"') == 1
+
+
+def test_a_skill_loaded_twice_returns_a_short_stub(
+    rx: Path, tmp_path: Path, script: Callable[..., list[dict[str, Any]]]
+) -> None:
+    skill = tmp_path / "skills" / "rx-arch"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text(
+        "---\nname: rx-arch\ndescription: d\n---\nПОЛНЫЙ-ТЕКСТ-НАВЫКА", encoding="utf-8"
+    )
+    calls = script(
+        response("invoke_skill", {"name": "rx-arch"}),
+        response("invoke_skill", {"name": "rx-arch"}),
+        finish(GOOD),
+    )
+    result = backend().run(make_request(rx, tmp_path, skills=[skill / "SKILL.md"]))
+    assert parse_analysis(result.final_message).decision == "suitable"
+    second = json.dumps(calls[1]["messages"], ensure_ascii=False)
+    third = json.dumps(calls[2]["messages"], ensure_ascii=False)
+    assert second.count("ПОЛНЫЙ-ТЕКСТ-НАВЫКА") == 1  # навык пришёл в первый раз
+    assert third.count("ПОЛНЫЙ-ТЕКСТ-НАВЫКА") == 1  # вторая загрузка не добавила копию
+    assert "уже загружен выше" in third

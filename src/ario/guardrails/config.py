@@ -30,9 +30,27 @@ class InjectionConfig(_Strict):
     patterns: list[PatternRule]
 
 
-class PathsConfig(_Strict):
+class FileRules(_Strict):
+    """Правила файлов по имени или папке: `*.g.cs`, `name.ext`, `dir/` (сверх общих)."""
+
+    write_deny: list[str] = Field(default_factory=list)  # правка запрещена
+    read_deny: list[str] = Field(default_factory=list)  # файла для агента нет: ни чтения, ни поиска
+    hide: list[str] = Field(
+        default_factory=list
+    )  # нет в find_files и search_text; читается по пути
+
+    def merged(self, extra: FileRules) -> FileRules:
+        return FileRules(
+            write_deny=[*self.write_deny, *extra.write_deny],
+            read_deny=[*self.read_deny, *extra.read_deny],
+            hide=[*self.hide, *extra.hide],
+        )
+
+
+class PathsConfig(FileRules):
     write_deny: list[str]
     read_deny: list[str]
+    hide: list[str] = Field(default_factory=list)
 
 
 class EnvConfig(_Strict):

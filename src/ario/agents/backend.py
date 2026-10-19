@@ -415,3 +415,36 @@ def _prepare_sdk() -> None:
 
     # Поле `summary` в действиях ломает tool calling Qwen (`summaryCheck`): отключаем
     tool_module._create_action_type_with_summary = lambda action_type: action_type
+
+    _dedupe_skill_invocations()
+
+
+SKILL_LOADED = (
+    "Навык {name} уже загружен выше в этом диалоге: возьми его текст из истории и не вызывай "
+    "навык повторно."
+)
+
+
+def _dedupe_skill_invocations() -> None:
+    """Повторный `invoke_skill` того же навыка в одном диалоге возвращает короткую заглушку.
+
+    Навык (до 12 тыс. символов) остаётся в истории и пересылается на каждом шаге; повторный
+    вызов добавил бы вторую копию (S24: навыки были 53% prompt-токенов).
+    """
+    from openhands.sdk.tool.builtins import invoke_skill as module
+
+    executor = module.InvokeSkillExecutor
+    if getattr(executor, "_ario_dedupe", False):
+        return
+    original = executor.__call__
+
+    def call(self: Any, action: Any, conversation: Any = None) -> Any:
+        name = str(action.name).strip()
+        if conversation is not None and name in conversation.state.invoked_skills:
+            return module.InvokeSkillObservation.from_text(
+                text=SKILL_LOADED.format(name=name), skill_name=name
+            )
+        return original(self, action, conversation)
+
+    executor.__call__ = call  # type: ignore[method-assign]
+    executor._ario_dedupe = True  # type: ignore[attr-defined]

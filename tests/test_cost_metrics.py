@@ -124,3 +124,35 @@ def test_other_providers_do_not_get_openrouter_extras(
         make_request(rx, tmp_path)
     )
     assert not calls[0].get("extra_body")
+
+
+def test_tool_load_attributes_prompt_tokens_to_tools_with_history_carry() -> None:
+    from ario.trace_report import render_summary, summarize
+
+    def event(kind: str, **data: object) -> dict[str, object]:
+        return {
+            "ts": "2026-10-17T10:00:00.000+00:00",
+            "ticket": "1",
+            "stage": "analysis",
+            "agent": "analyst",
+            "kind": kind,
+            "data": data,
+        }
+
+    events = [
+        event("agent_started"),
+        event("agent_action", tool="invoke_skill"),
+        event("agent_observation", tool="invoke_skill", text="a" * 3000),  # остаётся 3 шага
+        event("agent_action", tool="read_file"),
+        event("agent_observation", tool="read_file", text="b" * 300),  # остаётся 2 шага
+        event("agent_action", tool="read_file"),
+        event("agent_observation", tool="read_file", text="b" * 300),  # остаётся 1 шаг
+        event("agent_action", tool="finish"),
+        event("agent_finished", steps=4),
+    ]
+    summary = summarize(events)
+    skill, read = summary.tool_load["invoke_skill"], summary.tool_load["read_file"]
+    assert (skill.calls, skill.chars, skill.carried_tokens) == (1, 3000, 3000)
+    assert (read.calls, read.chars, read.carried_tokens) == (2, 600, 100 * 2 + 100 * 1)
+    text = render_summary(summary)
+    assert "Куда ушли токены" in text and "invoke_skill: 90%" in text

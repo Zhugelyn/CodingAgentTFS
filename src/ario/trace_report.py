@@ -58,6 +58,46 @@ class StageSummary:
 
 
 @dataclass
+class ToolLoad:
+    """Вклад инструмента в запросы к модели: ответ остаётся в истории и уходит на каждом шаге."""
+
+    calls: int = 0
+    chars: int = 0  # символов в ответах инструмента
+    carried_tokens: int = 0  # оценка: символы / 3 × число последующих шагов того же агента
+
+
+CHARS_PER_TOKEN = 3  # грубо для русского текста и кода
+
+
+def tool_load(events: list[Event]) -> dict[str, ToolLoad]:
+    """Оценка вклада инструментов в prompt-токены по трассе (ответы с учётом переноса в историю)."""
+    load: dict[str, ToolLoad] = {}
+    runs: list[list[Event]] = []
+    current: dict[tuple[str, str], list[Event]] = {}
+    for e in events:
+        key = (str(e.get("stage")), str(e.get("agent")))
+        if e["kind"] == "agent_started":
+            current[key] = []
+            runs.append(current[key])
+        elif e["kind"] in ("agent_action", "agent_observation") and key in current:
+            current[key].append(e)
+    for run in runs:
+        total = sum(1 for e in run if e["kind"] == "agent_action")
+        step = 0
+        for e in run:
+            data = e.get("data") or {}
+            if e["kind"] == "agent_action":
+                step += 1
+                continue
+            chars = len(str(data.get("text") or ""))
+            item = load.setdefault(str(data.get("tool", "?")), ToolLoad())
+            item.calls += 1
+            item.chars += chars
+            item.carried_tokens += chars // CHARS_PER_TOKEN * max(total - step, 0)
+    return load
+
+
+@dataclass
 class TraceSummary:
     ticket: str
     runs: int
@@ -69,6 +109,7 @@ class TraceSummary:
     finished: str | None
     stages: list[StageSummary]
     skipped_lines: int = 0
+    tool_load: dict[str, ToolLoad] = field(default_factory=dict)  # куда ушли токены (оценка)
 
 
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # ESC и прочие управляющие символы
@@ -185,6 +226,7 @@ def summarize(events: list[Event], skipped_lines: int = 0) -> TraceSummary:
         finished=events[-1]["ts"] if events else None,
         stages=list(stages.values()),
         skipped_lines=skipped_lines,
+        tool_load=tool_load(events),
     )
 
 
@@ -245,6 +287,15 @@ def render_summary(s: TraceSummary) -> str:
             tools = ", ".join(f"{name} ({n})" for name, n in st.tools.most_common())
             lines.append(f"    инструменты: {tools}")
         lines += [f"    - {note}" for note in st.notes]
+    if s.tool_load:
+        total = sum(item.carried_tokens for item in s.tool_load.values()) or 1
+        lines += ["", "Куда ушли токены (оценка вклада ответов инструментов в запросы к модели):"]
+        for name, item in sorted(s.tool_load.items(), key=lambda kv: -kv[1].carried_tokens):
+            lines.append(
+                f"    {name}: {item.carried_tokens * 100 // total}% "
+                f"({_fmt_tokens(item.carried_tokens)} токенов), вызовов {item.calls}, "
+                f"ответы {_fmt_tokens(item.chars)} симв."
+            )
     return "\n".join(lines) + "\n"
 
 

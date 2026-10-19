@@ -33,6 +33,10 @@ repositories:
     build_command: ""                # пусто: dotnet build проекта
     knowledge_dir: .                 # AGENTS.md, agents/, skills/ репозитория; от ARIO_PROJECT_DIR
     write_deny_extra: []             # правила запрета записи сверх config/guardrails.yaml
+    files:                           # правила файлов репозитория (добавляются к общим)
+      write_deny: []                 # нельзя менять
+      read_deny: []                  # нельзя читать и находить
+      hide: []                       # нет в поиске, читается по пути (например, сгенерированное)
     match:
       area_path: ['SmartInstruments\Antares']
       tags: []

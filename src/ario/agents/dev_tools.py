@@ -23,7 +23,7 @@ from ario.agents.readonly_tools import (
 from ario.errors import GuardViolation
 from ario.guardrails.boundaries import PathGuard
 from ario.tools.build import BuildTool as ProjectBuilder
-from ario.tools.edit import EditError, FileEditor
+from ario.tools.edit import SECRET_REFUSAL, EditError, FileEditor, added_text
 from ario.tools.git import GitRepo
 from ario.tools.proc import ToolError
 from ario.trace import TraceWriter
@@ -50,8 +50,10 @@ class DeveloperToolset:
         builder: ProjectBuilder,
         trace: TraceWriter,
         stage: str,
+        has_secret: Callable[[str], bool] | None = None,
     ) -> None:
         self._root = root.resolve()
+        self._has_secret = has_secret  # секреты в добавляемом тексте правки отвергаются (S24)
         self._guard = guard
         self._git = git
         self._builder = builder
@@ -65,6 +67,9 @@ class DeveloperToolset:
 
     # --- логика ---
     def edit(self, path: str, old_text: str, new_text: str) -> str:
+        if self._has_secret is not None and self._has_secret(added_text(old_text, new_text)):
+            self._trace.event("secret_blocked", stage=self._stage, where="edit_file", path=path)
+            raise EditError(SECRET_REFUSAL)
         outcome = self._editor.replace(path, old_text, new_text)
         self.edited[outcome.path] = self.edited.get(outcome.path, 0) + 1
         self.edits_since_build += 1

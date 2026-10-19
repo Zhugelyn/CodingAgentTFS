@@ -20,6 +20,19 @@ MAX_TEXT_CHARS = 20_000
 CONTEXT_LINES = 3
 
 
+SECRET_REFUSAL = (
+    "Правка отклонена: в добавляемом тексте секрет (ключ, токен, пароль, строка подключения или "
+    "закрытый ключ). Секреты в код не записываются: возьми значение из настроек приложения или "
+    "оставь параметр, а в итоговом ответе отметь, что нужен человек."
+)
+
+
+def added_text(old_text: str, new_text: str) -> str:
+    """Строки, которых в `old_text` не было: только их правка добавляет в файл."""
+    before = set(old_text.splitlines())
+    return "\n".join(line for line in new_text.splitlines() if line not in before)
+
+
 class EditError(ValueError):
     """Правка не выполнена; сообщение возвращается агенту как ошибка инструмента."""
 

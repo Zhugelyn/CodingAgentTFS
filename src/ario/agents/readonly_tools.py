@@ -11,7 +11,7 @@ import re
 import time
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import regex
 from openhands.sdk.tool import (
@@ -39,6 +39,16 @@ SEARCH_TIME_LIMIT = 20.0
 MAX_PATTERN_CHARS = 300
 MAX_SEARCH_LINE_CHARS = 2000  # длиннее строки не ищем: защита от катастрофического бэктрекинга
 LINE_REGEX_TIMEOUT = 0.25  # секунд на одну строку
+OUTLINE_MIN_LINES = 250  # у файла длиннее показывается оглавление (классы и методы)
+MAX_OUTLINE_ENTRIES = 80
+OUTLINE_LINE_CHARS = 110
+_OUTLINE = re.compile(
+    r"^\s*(?:\[[^\]]*\]\s*)*"
+    r"(?:(?:public|private|protected|internal|static|sealed|abstract|partial|override|virtual|"
+    r"async|new)\s+)*"
+    r"(?:(?:class|interface|struct|enum|record)\s+\w+"
+    r"|(?:public|private|protected|internal)\b[^;=]*\(.*)"
+)
 
 
 META_FIELDS = ("security_risk", "summary")
@@ -107,17 +117,41 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 
 def _walk_files(base: Path, root: Path, guard: PathGuard | None = None) -> Iterator[Path]:
-    """Файлы под `base`; символические ссылки за пределами `root` и файлы под `read_deny`
-    (ключи, `.env` и т.п.) пропускаются."""
+    """Файлы под `base`; символические ссылки за пределами `root`, файлы под `read_deny`
+    (ключи, `.env` и т.п.) и скрытые правилом `hide` (сгенерированные) пропускаются."""
     for dirpath, dirnames, filenames in os.walk(base):
         dirnames[:] = sorted(d for d in dirnames if d.casefold() not in SKIP_DIRS)
         for name in sorted(filenames):
             file = Path(dirpath) / name
             if file.is_symlink() and not file.resolve().is_relative_to(root):
                 continue
-            if guard is not None and not guard.readable(file):
+            if guard is not None and not guard.visible(file):
                 continue
             yield file
+
+
+def _outline(lines: list[str]) -> str:
+    """Оглавление C#-файла: строки с объявлениями типов и методов (по регулярному выражению)."""
+    entries: list[str] = []
+    for number, line in enumerate(lines, 1):
+        if _OUTLINE.match(line) and not line.lstrip().startswith(("//", "*")):
+            if len(entries) >= MAX_OUTLINE_ENTRIES:
+                entries.append("…")
+                break
+            entries.append(f"{number}: {line.strip()[:OUTLINE_LINE_CHARS]}")
+    return "\n".join(entries)
+
+
+def _covered(ranges: list[tuple[int, int]], start: int, end: int) -> bool:
+    """Целиком ли диапазон строк `start..end` уже входит в прочитанные раньше."""
+    position = start
+    for low, high in sorted(ranges):
+        if low > position:
+            break
+        position = max(position, high + 1)
+        if position > end:
+            return True
+    return False
 
 
 def _rel(root: Path, path: Path) -> str:
@@ -183,6 +217,11 @@ class SearchTextAction(LenientAction):
         default=None, description='Glob по имени файла, например "*.cs" или "*.mtd"'
     )
     ignore_case: bool = Field(default=False, description="Не учитывать регистр")
+    mode: Literal["lines", "files"] = Field(
+        default="lines",
+        description='"lines": строки `путь:строка: текст`; "files": только файлы и число '
+        "совпадений в каждом (дёшево для широкого шаблона: сначала найти файлы, потом читать)",
+    )
 
 
 class SearchTextExecutor(ToolExecutor[SearchTextAction, TextObservation]):
@@ -218,6 +257,8 @@ class SearchTextExecutor(ToolExecutor[SearchTextAction, TextObservation]):
         )
 
         matches: list[str] = []
+        counts: dict[str, int] = {}  # режим files: файл → число совпадений
+        by_files = action.mode == "files"
         started = time.monotonic()
         note = ""
         for file in files:
@@ -244,11 +285,17 @@ class SearchTextExecutor(ToolExecutor[SearchTextAction, TextObservation]):
                         "Упростите шаблон (без вложенных повторов вида (a+)+).",
                         is_error=True,
                     )
-                if found:
+                if found and by_files:
+                    name = _rel(self._root, file)
+                    counts[name] = counts.get(name, 0) + 1
+                elif found:
                     shown = line.strip()[:MAX_LINE_CHARS]
                     matches.append(f"{_rel(self._root, file)}:{number}: {shown}")
                     if len(matches) >= MAX_SEARCH_MATCHES:
                         break
+            if len(counts) >= MAX_FIND_RESULTS:
+                note = f"\n[показаны первые {MAX_FIND_RESULTS} файлов; уточните pattern или path]"
+                break
             if len(matches) >= MAX_SEARCH_MATCHES:
                 note = (
                     f"\n[показаны первые {MAX_SEARCH_MATCHES} совпадений; "
@@ -258,6 +305,10 @@ class SearchTextExecutor(ToolExecutor[SearchTextAction, TextObservation]):
             if time.monotonic() - started > SEARCH_TIME_LIMIT:
                 note = "\n[поиск прерван по времени; уточните path или include]"
                 break
+        if by_files and counts:
+            ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+            body = "\n".join(f"{name}: {n}" for name, n in ranked)
+            return TextObservation.from_text(body + note)
         if not matches:
             return TextObservation.from_text("Совпадений нет." + note)
         return TextObservation.from_text("\n".join(matches) + note)
@@ -277,6 +328,8 @@ class ReadFileExecutor(ToolExecutor[ReadFileAction, TextObservation]):
         self._root = root.resolve()
         self._guard = guard
         self._last: tuple[str, int, int, int, int] | None = None  # прошлый вызов и состояние файла
+        # файл → (состояние файла, уже показанные диапазоны строк): повторное чтение не нужно
+        self._shown: dict[str, tuple[tuple[int, int], list[tuple[int, int]]]] = {}
 
     def __call__(
         self, action: ReadFileAction, conversation: object | None = None
@@ -323,10 +376,25 @@ class ReadFileExecutor(ToolExecutor[ReadFileAction, TextObservation]):
                 break
             out.append(text)
         last = action.offset + len(out) - 1
+        state = (info.st_mtime_ns, info.st_size)
+        known_state, ranges = self._shown.get(str(path), (state, []))
+        if known_state != state:  # файл изменился (правка): прежние чтения не в счёт
+            ranges = []
+        if _covered(ranges, action.offset, last):
+            return TextObservation.from_text(
+                f"Строки {action.offset}-{last} файла {action.path} ты уже читал выше, файл не "
+                "менялся: возьми текст из истории. Читай другой фрагмент или ищи через search_text."
+            )
+        first_read = not ranges
+        self._shown[str(path)] = (state, [*ranges, (action.offset, last)])
         footer = f"[строки {action.offset}-{last} из {len(lines)}]"
         if last < len(lines):
             footer += f" Для продолжения: offset={last + 1}."
-        return TextObservation.from_text("\n".join(out) + "\n" + footer)
+        text = "\n".join(out) + "\n" + footer
+        big_cs = len(lines) >= OUTLINE_MIN_LINES and path.suffix.lower() == ".cs"
+        if first_read and action.offset == 1 and big_cs and (outline := _outline(lines)):
+            text += "\n[структура файла: строка: объявление]\n" + outline
+        return TextObservation.from_text(text)
 
 
 # --- регистрация -------------------------------------------------------------------------------
@@ -395,7 +463,8 @@ def register_readonly_tools(root: Path, guard: PathGuard) -> None:
             SearchTextAction,
             SearchTextExecutor(root, guard),
             "Поиск по содержимому файлов (регулярное выражение). "
-            "Возвращает `путь:строка: текст`, до 50 совпадений.",
+            "Возвращает `путь:строка: текст`, до 50 совпадений; mode=files даёт только файлы и "
+            "число совпадений (для широкого шаблона).",
             "search_text",
         ),
     )
