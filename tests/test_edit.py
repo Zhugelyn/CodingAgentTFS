@@ -138,9 +138,9 @@ def test_non_utf8_and_huge_files_refused(editor: FileEditor, rx: Path) -> None:
     write(rx, "src/Old.cs", "привет".encode("cp1251"))
     with pytest.raises(EditError, match="UTF-8"):
         editor.replace("src/Old.cs", "x", "y")
-    write(rx, "src/Big.txt", b"a" * 2_100_000)
+    write(rx, "src/Big.cs", b"a" * 2_100_000)
     with pytest.raises(EditError, match="слишком большой"):
-        editor.replace("src/Big.txt", "a", "b")
+        editor.replace("src/Big.cs", "a", "b")
 
 
 def test_no_temp_files_left_behind(editor: FileEditor, rx: Path) -> None:

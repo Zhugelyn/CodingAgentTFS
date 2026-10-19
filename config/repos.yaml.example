@@ -18,6 +18,8 @@ repos:
     write_deny_extra: []             # правила запрета записи сверх config/guardrails.yaml
     files:                           # правила файлов репозитория (добавляются к общим)
       write_deny: []                 # нельзя менять
+      write_allow: ['src/Packages/*.cs', 'src/Packages/*.resx', 'src/Packages/*.mtd',
+                    'src/Packages/*.json']   # сужает общий список: писать только в пакеты
       read_deny: []                  # нельзя читать и находить
       hide: []                       # нет в поиске, читается по пути (например, сгенерированное)
     match:

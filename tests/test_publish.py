@@ -595,3 +595,12 @@ def test_publish_stops_when_the_diff_contains_a_secret(
     assert api.requests == []  # ни push, ни PR
     assert git(world["work"], "diff", "--cached", "--name-only").strip() == ""  # индекс очищен
     assert "ai/43031" not in git(world["remote"], "branch", "--list")  # ветка не отправлена
+
+
+def test_publish_refuses_staged_files_outside_the_write_allow_list(
+    run_stage: Callable[..., tuple[str, Api, Settings]], world: dict[str, Path]
+) -> None:
+    (world["work"] / "gen.py").write_text("import os\n", encoding="utf-8")  # не правка агента
+    outcome, api, settings = run_stage()
+    assert outcome == "needs-human" and "gen.py" in reason(settings)
+    assert api.requests == [] and "ai/43031" not in git(world["remote"], "branch", "--list")

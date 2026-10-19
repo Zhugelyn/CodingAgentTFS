@@ -177,6 +177,7 @@ def test_repos_file_takes_precedence_over_env(settings: Settings, tmp_path: Path
 # --- границы путей профиля -----------------------------------------------------------------------
 def test_profile_extra_write_deny_is_added_to_the_common_rules(tmp_path: Path) -> None:
     guardrails = Guardrails.load(Path(__file__).resolve().parents[1] / "config" / "guardrails.yaml")
+    guardrails.config.paths.write_allow.clear()  # здесь проверяется только запрет
     target = tmp_path / "A.generated"
     target.write_text("x", encoding="utf-8")
     plain = guardrails.path_guard(tmp_path)

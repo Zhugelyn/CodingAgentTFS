@@ -80,6 +80,7 @@ class RepoProfile:
             write_deny=[*self.write_deny_extra, *self.files.write_deny],
             read_deny=list(self.files.read_deny),
             hide=list(self.files.hide),
+            write_allow=list(self.files.write_allow),
         )
 
 

@@ -38,6 +38,10 @@ class FileRules(_Strict):
     hide: list[str] = Field(
         default_factory=list
     )  # нет в find_files и search_text; читается по пути
+    # белый список записи: пусто — без ограничения, иначе писать можно только в подходящие файлы.
+    # Правило без `/` сверяется с именем файла (`*.cs`), с `/` — с путём от корня (`src/Pkg/*.cs`).
+    # Список репозитория сужает общий: файл должен подойти под оба.
+    write_allow: list[str] = Field(default_factory=list)
 
     def merged(self, extra: FileRules) -> FileRules:
         return FileRules(
@@ -51,6 +55,7 @@ class PathsConfig(FileRules):
     write_deny: list[str]
     read_deny: list[str]
     hide: list[str] = Field(default_factory=list)
+    write_allow: list[str] = Field(default_factory=list)
 
 
 class EnvConfig(_Strict):

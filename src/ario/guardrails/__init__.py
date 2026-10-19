@@ -55,6 +55,7 @@ class Guardrails:
                     "hide": merged.hide,
                 }
             ),
+            extra_write_allow=[rules.write_allow],  # список репозитория сужает общий
         )
 
     def deadline(self, elapsed: float = 0.0) -> Deadline:

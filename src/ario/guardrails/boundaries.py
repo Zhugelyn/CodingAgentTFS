@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -59,12 +59,33 @@ def _denied(rel: Path, rules: list[str]) -> str | None:
     return None
 
 
+def _allowed(rel: Path, patterns: Sequence[str]) -> bool:
+    """Подходит ли файл под одно из правил белого списка: имя (`*.cs`) или путь от корня
+    (`src/Pkg/*.cs`; `*` совпадает и с `/`). Регистр не важен."""
+    posix = rel.as_posix().casefold()
+    name = rel.name.casefold()
+    for pattern in patterns:
+        rule = pattern.casefold().lstrip("/")
+        target = posix if "/" in rule else name
+        if fnmatch.fnmatchcase(target, rule):
+            return True
+    return False
+
+
 class PathGuard:
     """Разрешает пути только внутри корня репозитория и применяет deny-правила."""
 
-    def __init__(self, root: Path, config: PathsConfig) -> None:
+    def __init__(
+        self,
+        root: Path,
+        config: PathsConfig,
+        extra_write_allow: Sequence[Sequence[str]] = (),
+    ) -> None:
         self._root = root.resolve()
         self._config = config
+        # списки белого списка записи: общий и репозитория; файл должен подойти под каждый
+        # непустой (пустой список означает «без ограничения»)
+        self._write_allow = [list(g) for g in (config.write_allow, *extra_write_allow) if g]
 
     def check(self, path: str | Path, mode: Mode) -> Path:
         _reject_suspicious(str(path))
@@ -84,6 +105,14 @@ class PathGuard:
         if rule is not None:
             verb = "Запись в" if mode == "write" else "Чтение"
             raise GuardViolation(f"{verb} {rel.as_posix()} запрещено правилом {rule!r}")
+        if mode == "write":
+            for patterns in self._write_allow:
+                if not _allowed(rel, patterns):
+                    shown = ", ".join(patterns[:8]) + (" и др." if len(patterns) > 8 else "")
+                    raise GuardViolation(
+                        f"Запись в {rel.as_posix()} запрещена: файл не из списка разрешённых "
+                        f"для записи ({shown})"
+                    )
         return resolved
 
     def readable(self, resolved: Path) -> bool:
