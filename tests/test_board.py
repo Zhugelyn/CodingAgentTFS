@@ -231,9 +231,11 @@ def test_reporter_problems_check_every_flow_against_the_board(tmp_path: Path) ->
 # --- ссылки в комментариях ----------------------------------------------------------------------
 def test_urls_become_links_without_letting_markup_through() -> None:
     url = "https://rxtfs.example.test/Git/_git/R/pullrequest/7"
-    html = render_comment_html(f"PR: {url}.\nГотово")
+    html = render_comment_html(f"PR: {url}.\nГотово", link_hosts=["rxtfs.example.test"])
     assert f'<a href="{url}">{url}</a>.<br>Готово' in html  # точка после адреса вне ссылки
-    hostile = render_comment_html('<script>x</script> http://a.test/?q="><img src=x onerror=y>')
+    hostile = render_comment_html(
+        '<script>x</script> http://a.test/?q="><img src=x onerror=y>', link_hosts=["a.test"]
+    )
     assert "<script>" not in hostile and "<img" not in hostile
     assert "javascript:alert(1)" in render_comment_html("javascript:alert(1)")
     assert "<a " not in render_comment_html("javascript:alert(1)")

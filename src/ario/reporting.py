@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -263,9 +264,10 @@ def write_config_problem(settings: Settings) -> str | None:
 def build_reporter(settings: Settings, mask: Callable[[str], str]) -> TicketReporter:
     """Отчёт на доске по настройкам; без `TFS_WRITE` или без токена пишет только в трассу."""
     flow = TicketFlow.load(settings.ticket_flow_path) if settings.ticket_flow_path else None
+    profiles = RepoRegistry.from_settings(settings).profiles
     repo_flows = {
         profile.name: TicketFlow.load(profile.flow_path)
-        for profile in RepoRegistry.from_settings(settings).profiles
+        for profile in profiles
         if profile.flow_path is not None
     }
     if not settings.tfs_write:
@@ -281,4 +283,7 @@ def build_reporter(settings: Settings, mask: Callable[[str], str]) -> TicketRepo
         timeout=BOARD_TIMEOUT,
         retry_wait=(),  # доска внутри прогона: без долгих повторов чтения
     )
-    return TicketReporter(TfsTicketSystem(client, mask), flow, repo_flows)
+    # кликабельны только ссылки на свои серверы: сервер доски и серверы кода (S25)
+    urls = [settings.tfs_url, *(p.publish.url for p in profiles if p.publish is not None)]
+    hosts = {host for url in urls if (host := urlparse(url).hostname)}
+    return TicketReporter(TfsTicketSystem(client, mask, link_hosts=hosts), flow, repo_flows)

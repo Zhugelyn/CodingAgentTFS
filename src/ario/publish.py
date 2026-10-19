@@ -27,6 +27,7 @@ from ario.guardrails.boundaries import PathGuard, clean_env
 from ario.guardrails.config import EnvConfig
 from ario.orchestrator import Stage, StageContext
 from ario.repos import PublishConfig, RepoProfile
+from ario.safe_text import clean, close_open_fence, code_block, inline_code
 from ario.stage_names import (
     MAX_HUMAN_REWORKS,
     PUBLISH,
@@ -183,12 +184,16 @@ def check_remote(url: str, config: PublishConfig) -> None:
         )
 
 
+FENCE_RESERVE = 16  # запас на закрывающее ограждение, если обрезка оборвала блок кода
+
+
 def _limit(text: str) -> str:
-    """Обрезка описания PR по границе строки: блок кода или разметка не рвутся посередине."""
+    """Обрезка описания PR по границе строки; оборванный блок кода закрывается."""
     if len(text) <= MAX_PR_DESCRIPTION:
         return text
-    cut = text[:MAX_PR_DESCRIPTION]
-    return cut[: cut.rfind("\n")] if "\n" in cut else cut
+    cut = text[: MAX_PR_DESCRIPTION - FENCE_RESERVE]
+    cut = cut[: cut.rfind("\n")] if "\n" in cut else cut
+    return close_open_fence(cut)
 
 
 def _forbidden(names: list[str], guard: PathGuard) -> list[str]:
@@ -247,25 +252,23 @@ def render_pr_description(ctx: StageContext) -> str:
         if link
         else f"Тикет № {ctx.ticket.id} (сервер доски)",
         "",
-        _one_line(ctx.ticket.title),
+        inline_code(ctx.ticket.title),  # текст автора тикета: только как код, не как разметка
     ]
     try:
         plan = load_analysis(ctx.run_dir / "analysis.json").plan
     except (OSError, VerdictError):
         plan = []
-    if plan:
-        lines += ["", "## План"]
+    if plan:  # текст модели (S25): в блоке кода разметка, картинки и упоминания не работают
+        steps = []
         for step in plan[:MAX_PLAN_STEPS]:
             files = f" ({', '.join(step.files)})" if step.files else ""
-            lines.append(f"- {step.step}{files}")
+            steps.append(f"- {step.step}{files}")
+        lines += ["", "## План", code_block("\n".join(steps))]
     for name in ("development-2.md", "development-1.md"):
         report = ctx.run_dir / name
         if report.is_file():
-            lines += [
-                "",
-                "## Отчёт разработчика",
-                report.read_text(encoding="utf-8")[:MAX_REPORT_CHARS],
-            ]
+            text = report.read_text(encoding="utf-8")[:MAX_REPORT_CHARS]
+            lines += ["", "## Отчёт разработчика", code_block(text)]
             break
     if verdicts := _verdicts(ctx):
         lines += ["", f"## Ревью: {' → '.join(verdicts)}"]
@@ -315,8 +318,9 @@ def _reply_in_pull_request(
     """Итог доработки пишется в PR отдельным комментарием; сбой комментария этап не роняет."""
     report = ctx.run_dir / f"{development_stage(human_attempt(round_number))}.md"
     summary = report.read_text(encoding="utf-8")[:MAX_REPORT_CHARS] if report.is_file() else ""
+    head = f"{AGENT_REPLY_MARK} №{round_number} по замечаниям учтена."
     text = neutralize_refs(
-        ctx.mask(f"{AGENT_REPLY_MARK} №{round_number} по замечаниям учтена.\n\n{summary}".strip())
+        ctx.mask(f"{head}\n\n{code_block(summary)}" if summary.strip() else head)
     )
     try:
         with client_factory(config, token) as client:
@@ -370,7 +374,7 @@ def _publish(
             f"В добавленных строках есть секреты (ключи, токены, пароли): {shown}. "
             "Публикация остановлена: уберите их из правок и запустите этап снова."
         )
-    committed = publisher.commit(neutralize_refs(ctx.mask(message)), author)
+    committed = publisher.commit(neutralize_refs(clean(ctx.mask(message))), author)
     if publisher.commits_ahead(repo.base_branch) == 0:
         raise StageFailed("В ветке нет коммитов сверх базовой: публиковать нечего")
     publisher.push(config.remote, branch, token)
@@ -385,7 +389,7 @@ def _publish(
             branch,
             config.target_branch,
             neutralize_refs(
-                ctx.mask(config.pr_title_template.format(id=ctx.ticket.id, title=title))
+                clean(ctx.mask(config.pr_title_template.format(id=ctx.ticket.id, title=title)))
             ),
             render_pr_description(ctx),
             draft=config.draft,

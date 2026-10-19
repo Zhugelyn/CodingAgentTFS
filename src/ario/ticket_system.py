@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+from urllib.parse import urlparse
 
+from ario.safe_text import clean
 from ario.tfs.client import TfsConflictError, TfsError
 
 MAX_COMMENT_CHARS = 6000
@@ -63,24 +65,31 @@ class NullTicketSystem:
         return WriteResult("skipped", self.reason)
 
 
-def _link(match: re.Match[str]) -> str:
+def _link(match: re.Match[str], hosts: frozenset[str]) -> str:
     url = match.group(0)
     tail = ""
     while url and url[-1] in _URL_TAIL:  # знак препинания после адреса в ссылку не входит
         url, tail = url[:-1], url[-1] + tail
     if url.count("/") < 2 or len(url) <= len("https://"):
         return match.group(0)
+    host = (urlparse(html.unescape(url)).hostname or "").lower()
+    if host not in hosts:  # чужой адрес из текста модели или тикета остаётся текстом
+        return match.group(0)
     return f'<a href="{url}">{url}</a>{tail}'
 
 
-def render_comment_html(text: str, mention: tuple[str, str] | None = None) -> str:
+def render_comment_html(
+    text: str, mention: tuple[str, str] | None = None, link_hosts: Collection[str] = ()
+) -> str:
     """Текст → HTML комментария TFS. Всё экранируется: текст может нести недоверенное.
 
-    Адреса http(s) после экранирования становятся ссылками: кавычек, скобок тегов и пробелов в
-    адресе нет, поэтому разметку из текста получить нельзя.
+    Ссылками становятся только адреса http(s) на хосты из `link_hosts` (сервер доски и серверы
+    кода): чужой адрес остаётся текстом. Кавычек, скобок тегов и пробелов в адресе нет, поэтому
+    разметку из текста получить нельзя. Невидимые и управляющие знаки убираются.
     """
-    escaped = html.escape(text.strip()[:MAX_COMMENT_CHARS], quote=False)
-    body = _URL.sub(_link, escaped).replace("\n", "<br>")
+    hosts = frozenset(host.lower() for host in link_hosts)
+    escaped = html.escape(clean(text).strip()[:MAX_COMMENT_CHARS], quote=False)
+    body = _URL.sub(lambda match: _link(match, hosts), escaped).replace("\n", "<br>")
     if mention is None:
         return body
     name, identity_id = mention
@@ -94,9 +103,15 @@ def render_comment_html(text: str, mention: tuple[str, str] | None = None) -> st
 class TfsTicketSystem:
     """Запись в Azure DevOps Server через `TfsClient` (доска, не git-сервер)."""
 
-    def __init__(self, client: _Client, mask: Callable[[str], str] = lambda text: text) -> None:
+    def __init__(
+        self,
+        client: _Client,
+        mask: Callable[[str], str] = lambda text: text,
+        link_hosts: Collection[str] = (),
+    ) -> None:
         self._client = client
         self._mask = mask
+        self._link_hosts = tuple(link_hosts)  # хосты, ссылки на которые кликабельны (S25)
         self._states: dict[str, dict[str, str]] = {}
         self._failures = 0
 
@@ -139,7 +154,9 @@ class TfsTicketSystem:
                     text, note = f"@{name}: {text}", "; без уведомления: нет id автора"
                 else:
                     note = "; автора тикета определить не удалось"
-            comment_id = self._client.add_comment(item_id, render_comment_html(text, mention))
+            comment_id = self._client.add_comment(
+                item_id, render_comment_html(text, mention, self._link_hosts)
+            )
         except (TfsError, ValueError) as e:
             return WriteResult("failed", self._mask(str(e)))
         return WriteResult("done", f"комментарий {comment_id}{note}")
